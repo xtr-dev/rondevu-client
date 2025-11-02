@@ -29,7 +29,7 @@ export class RondevuClient {
   constructor(options: RondevuClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, ''); // Remove trailing slash
     this.origin = options.origin || new URL(this.baseUrl).origin;
-    this.fetchImpl = options.fetch || fetch;
+    this.fetchImpl = options.fetch || globalThis.fetch.bind(globalThis);
   }
 
   /**
