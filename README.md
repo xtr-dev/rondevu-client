@@ -1,11 +1,11 @@
-# @rondevu/client
+# @xtr-dev/rondevu-client
 
 TypeScript client for interacting with the Rondevu peer signaling and discovery server. Provides a simple, type-safe API for WebRTC peer discovery and connection establishment.
 
 ## Installation
 
 ```bash
-npm install @rondevu/client
+npm install @xtr-dev/rondevu-client
 ```
 
 ## Usage
@@ -13,7 +13,7 @@ npm install @rondevu/client
 ### Basic Setup
 
 ```typescript
-import { RondevuClient } from '@rondevu/client';
+import { RondevuClient } from '@xtr-dev/rondevu-client';
 
 const client = new RondevuClient({
   baseUrl: 'https://rondevu.example.com',
@@ -197,7 +197,7 @@ import {
   PollRequest,
   Side,
   // ... and more
-} from '@rondevu/client';
+} from '@xtr-dev/rondevu-client';
 ```
 
 ## Node.js Usage
@@ -206,7 +206,7 @@ For Node.js environments (v18+), the built-in fetch is used automatically. For o
 
 ```typescript
 import fetch from 'node-fetch';
-import { RondevuClient } from '@rondevu/client';
+import { RondevuClient } from '@xtr-dev/rondevu-client';
 
 const client = new RondevuClient({
   baseUrl: 'https://rondevu.example.com',

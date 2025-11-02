@@ -1,5 +1,5 @@
 {
-  "name": "@rondevu/client",
+  "name": "@xtr-dev/rondevu-client",
   "version": "1.0.0",
   "description": "TypeScript client for Rondevu peer signaling and discovery server",
   "main": "dist/index.js",

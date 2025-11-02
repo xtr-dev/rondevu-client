@@ -1,9 +1,9 @@
 /**
- * @rondevu/client - TypeScript client for Rondevu peer signaling server
+ * TypeScript client for Rondevu peer signaling server
  *
  * @example
  * ```typescript
- * import { RondevuClient } from '@rondevu/client';
+ * import { RondevuClient } from '@xtr-dev/rondevu-client';
  *
  * const client = new RondevuClient({
  *   baseUrl: 'https://rondevu.example.com'
