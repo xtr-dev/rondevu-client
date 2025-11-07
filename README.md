@@ -4,7 +4,9 @@
 
 ## @xtr-dev/rondevu-client
 
-Rondevu HTTP and WebRTC client, for simple peer discovery and connection.
+[![npm version](https://img.shields.io/npm/v/@xtr-dev/rondevu-client)](https://www.npmjs.com/package/@xtr-dev/rondevu-client)
+
+TypeScript Rondevu HTTP and WebRTC client, for simple peer discovery and connection.
 
 ### Install
 
