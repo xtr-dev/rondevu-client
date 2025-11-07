@@ -1,6 +1,6 @@
 {
   "name": "@xtr-dev/rondevu-client",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "description": "TypeScript client for Rondevu peer signaling and discovery server",
   "type": "module",
   "main": "dist/index.js",
@@ -8,7 +8,8 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "publish": "npm publish"
   },
   "keywords": [
     "webrtc",
