@@ -175,8 +175,8 @@ export interface RondevuClientOptions {
  * Configuration options for Rondevu WebRTC client
  */
 export interface RondevuOptions {
-  /** Base URL of the Rondevu server (e.g., 'https://example.com') */
-  baseUrl: string;
+  /** Base URL of the Rondevu server (defaults to 'https://rondevu.xtrdev.workers.dev') */
+  baseUrl?: string;
   /** Peer identifier (optional, auto-generated if not provided) */
   peerId?: string;
   /** Origin header value for session isolation (defaults to baseUrl origin) */
