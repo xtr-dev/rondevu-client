@@ -1,31 +1,41 @@
 /**
- * TypeScript client for Rondevu peer signaling server
- *
- * @example
- * ```typescript
- * import { RondevuClient } from '@xtr-dev/rondevu-client';
- *
- * const client = new RondevuClient({
- *   baseUrl: 'https://rondevu.example.com'
- * });
- *
- * // Create an offer
- * const { code } = await client.createOffer('my-room', {
- *   info: 'peer-123',
- *   offer: signalingData
- * });
- *
- * // Discover peers
- * const { sessions } = await client.listSessions('my-room');
- *
- * // Send answer
- * await client.sendAnswer({
- *   code: sessions[0].code,
- *   answer: answerData,
- *   side: 'answerer'
- * });
- * ```
+ * @xtr-dev/rondevu-client
+ * WebRTC peer signaling and discovery client
  */
 
+// Export main WebRTC client class
+export { Rondevu } from './rondevu';
+
+// Export connection class
+export { RondevuConnection } from './connection';
+
+// Export low-level signaling client (for advanced usage)
 export { RondevuClient } from './client';
-export * from './types';
+
+// Export all types
+export type {
+  // WebRTC types
+  RondevuOptions,
+  JoinOptions,
+  ConnectionRole,
+  RondevuConnectionParams,
+  RondevuConnectionEvents,
+  // Signaling types
+  Side,
+  Session,
+  TopicInfo,
+  Pagination,
+  ListTopicsResponse,
+  ListSessionsResponse,
+  CreateOfferRequest,
+  CreateOfferResponse,
+  AnswerRequest,
+  AnswerResponse,
+  PollRequest,
+  PollOffererResponse,
+  PollAnswererResponse,
+  PollResponse,
+  HealthResponse,
+  ErrorResponse,
+  RondevuClientOptions,
+} from './types';

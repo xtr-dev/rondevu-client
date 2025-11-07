@@ -99,7 +99,7 @@ export class RondevuClient {
    * ```typescript
    * const client = new RondevuClient({ baseUrl: 'https://example.com' });
    * const { sessions } = await client.listSessions('my-room');
-   * const otherPeers = sessions.filter(s => s.info !== myPeerId);
+   * const otherPeers = sessions.filter(s => s.peerId !== myPeerId);
    * ```
    */
   async listSessions(topic: string): Promise<ListSessionsResponse> {
@@ -111,15 +111,15 @@ export class RondevuClient {
   /**
    * Announces peer availability and creates a new session
    *
-   * @param topic - Topic identifier for grouping peers (max 256 characters)
-   * @param request - Offer details including peer info and signaling data
+   * @param topic - Topic identifier for grouping peers (max 1024 characters)
+   * @param request - Offer details including peer ID and signaling data
    * @returns Unique session code (UUID)
    *
    * @example
    * ```typescript
    * const client = new RondevuClient({ baseUrl: 'https://example.com' });
    * const { code } = await client.createOffer('my-room', {
-   *   info: 'peer-123',
+   *   peerId: 'peer-123',
    *   offer: signalingData
    * });
    * console.log('Session code:', code);

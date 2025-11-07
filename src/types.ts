@@ -1,3 +1,7 @@
+// ============================================================================
+// Signaling Types
+// ============================================================================
+
 /**
  * Session side - identifies which peer in a connection
  */
@@ -10,7 +14,7 @@ export interface Session {
   /** Unique session identifier (UUID) */
   code: string;
   /** Peer identifier/metadata */
-  info: string;
+  peerId: string;
   /** Signaling data for peer connection */
   offer: string;
   /** Additional signaling data from offerer */
@@ -65,9 +69,11 @@ export interface ListSessionsResponse {
  */
 export interface CreateOfferRequest {
   /** Peer identifier/metadata (max 1024 characters) */
-  info: string;
+  peerId: string;
   /** Signaling data for peer connection */
   offer: string;
+  /** Optional custom connection code (if not provided, server generates UUID) */
+  code?: string;
 }
 
 /**
@@ -159,4 +165,68 @@ export interface RondevuClientOptions {
   origin?: string;
   /** Optional fetch implementation (for Node.js environments) */
   fetch?: typeof fetch;
+}
+
+// ============================================================================
+// WebRTC Types
+// ============================================================================
+
+/**
+ * Configuration options for Rondevu WebRTC client
+ */
+export interface RondevuOptions {
+  /** Base URL of the Rondevu server (e.g., 'https://example.com') */
+  baseUrl: string;
+  /** Peer identifier (optional, auto-generated if not provided) */
+  peerId?: string;
+  /** Origin header value for session isolation (defaults to baseUrl origin) */
+  origin?: string;
+  /** Optional fetch implementation (for Node.js environments) */
+  fetch?: typeof fetch;
+  /** WebRTC configuration (ICE servers, etc.) */
+  rtcConfig?: RTCConfiguration;
+  /** Polling interval in milliseconds (default: 1000) */
+  pollingInterval?: number;
+  /** Connection timeout in milliseconds (default: 30000) */
+  connectionTimeout?: number;
+}
+
+/**
+ * Options for joining a topic
+ */
+export interface JoinOptions {
+  /** Filter function to select specific sessions */
+  filter?: (session: { code: string; peerId: string }) => boolean;
+  /** Selection strategy for choosing a session */
+  select?: 'first' | 'newest' | 'oldest' | 'random';
+}
+
+/**
+ * Connection role - whether this peer is creating or answering
+ */
+export type ConnectionRole = 'offerer' | 'answerer';
+
+/**
+ * Parameters for creating a RondevuConnection
+ */
+export interface RondevuConnectionParams {
+  id: string;
+  topic: string;
+  role: ConnectionRole;
+  pc: RTCPeerConnection;
+  localPeerId: string;
+  remotePeerId: string;
+  pollingInterval: number;
+  connectionTimeout: number;
+}
+
+/**
+ * Event map for RondevuConnection events
+ */
+export interface RondevuConnectionEvents {
+  connect: () => void;
+  disconnect: () => void;
+  error: (error: Error) => void;
+  datachannel: (channel: RTCDataChannel) => void;
+  stream: (stream: MediaStream) => void;
 }
