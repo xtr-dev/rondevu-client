@@ -192,6 +192,14 @@ export interface RondevuOptions {
 }
 
 /**
+ * Options for connecting to a session
+ */
+export interface ConnectOptions {
+  /** Use global origin (https://ronde.vu) instead of request origin for session isolation */
+  global?: boolean;
+}
+
+/**
  * Options for joining a topic
  */
 export interface JoinOptions {
