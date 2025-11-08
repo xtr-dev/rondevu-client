@@ -6,6 +6,7 @@ Meet peers by topic, by peer ID, or by connection ID.
 
 **Related repositories:**
 - [rondevu-server](https://github.com/xtr-dev/rondevu-server) - HTTP signaling server
+- [rondevu-demo](https://github.com/xtr-dev/rondevu-demo) - Interactive demo
 
 ---
 
