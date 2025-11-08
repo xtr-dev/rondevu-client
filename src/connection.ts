@@ -21,9 +21,8 @@ export class RondevuConnection extends EventEmitter {
   private connectionTimer?: ReturnType<typeof setTimeout>;
   private isPolling: boolean = false;
   private isClosed: boolean = false;
-  private customHeaders?: Record<string, string>;
 
-  constructor(params: RondevuConnectionParams, client: RondevuClient, customHeaders?: Record<string, string>) {
+  constructor(params: RondevuConnectionParams, client: RondevuClient) {
     super();
     this.id = params.id;
     this.topic = params.topic;
@@ -35,7 +34,6 @@ export class RondevuConnection extends EventEmitter {
     this.dataChannels = new Map();
     this.pollingIntervalMs = params.pollingInterval;
     this.connectionTimeoutMs = params.connectionTimeout;
-    this.customHeaders = customHeaders;
 
     this.setupEventHandlers();
     this.startConnectionTimeout();
@@ -121,7 +119,7 @@ export class RondevuConnection extends EventEmitter {
         code: this.id,
         candidate: JSON.stringify(candidate.toJSON()),
         side: this.role,
-      }, this.customHeaders);
+      });
     } catch (err: any) {
       throw new Error(`Failed to send ICE candidate: ${err.message}`);
     }
@@ -171,7 +169,7 @@ export class RondevuConnection extends EventEmitter {
     }
 
     try {
-      const response = await this.client.poll(this.id, this.role, this.customHeaders);
+      const response = await this.client.poll(this.id, this.role);
 
       if (this.role === 'offerer') {
         const offererResponse = response as { answer: string | null; answerCandidates: string[] };

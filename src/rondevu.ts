@@ -1,6 +1,6 @@
 import { RondevuClient } from './client';
 import { RondevuConnection } from './connection';
-import { RondevuOptions, JoinOptions, ConnectOptions, RondevuConnectionParams } from './types';
+import { RondevuOptions, JoinOptions, RondevuConnectionParams } from './types';
 
 /**
  * Main Rondevu WebRTC client with automatic connection management
@@ -25,7 +25,6 @@ export class Rondevu {
 
     this.client = new RondevuClient({
       baseUrl: this.baseUrl,
-      origin: options.origin,
       fetch: options.fetch,
     });
 
@@ -100,17 +99,11 @@ export class Rondevu {
   /**
    * Connect to an existing connection by ID (answerer role)
    * @param id - Connection identifier
-   * @param options - Optional connection options (e.g., { global: true } for global origin)
    * @returns Promise that resolves to RondevuConnection
    */
-  async connect(id: string, options?: ConnectOptions): Promise<RondevuConnection> {
-    // Build custom headers if global option is set
-    const customHeaders = options?.global
-      ? { 'X-Rondevu-Global': 'true' }
-      : undefined;
-
+  async connect(id: string): Promise<RondevuConnection> {
     // Poll server to get session by ID
-    const sessionData = await this.findSessionByIdWithClient(id, this.client, customHeaders);
+    const sessionData = await this.findSessionByIdWithClient(id, this.client);
 
     if (!sessionData) {
       throw new Error(`Connection ${id} not found or expired`);
@@ -137,7 +130,7 @@ export class Rondevu {
       code: id,
       answer: pc.localDescription!.sdp,
       side: 'answerer',
-    }, customHeaders);
+    });
 
     // Create connection object
     const connectionParams: RondevuConnectionParams = {
@@ -151,7 +144,7 @@ export class Rondevu {
       connectionTimeout: this.connectionTimeout,
     };
 
-    const connection = new RondevuConnection(connectionParams, this.client, customHeaders);
+    const connection = new RondevuConnection(connectionParams, this.client);
 
     // Start polling for ICE candidates
     connection.startPolling();
@@ -250,8 +243,7 @@ export class Rondevu {
    */
   private async findSessionByIdWithClient(
     id: string,
-    client: RondevuClient,
-    customHeaders?: Record<string, string>
+    client: RondevuClient
   ): Promise<{
     code: string;
     peerId: string;
@@ -261,7 +253,7 @@ export class Rondevu {
     try {
       // Try to poll for the session directly
       // The poll endpoint should return the session data
-      const response = await client.poll(id, 'answerer', customHeaders);
+      const response = await client.poll(id, 'answerer');
       const answererResponse = response as { offer: string; offerCandidates: string[] };
 
       if (answererResponse.offer) {

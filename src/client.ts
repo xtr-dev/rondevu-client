@@ -19,7 +19,6 @@ import {
  */
 export class RondevuClient {
   private readonly baseUrl: string;
-  private readonly origin: string;
   private readonly fetchImpl: typeof fetch;
 
   /**
@@ -28,7 +27,6 @@ export class RondevuClient {
    */
   constructor(options: RondevuClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, ''); // Remove trailing slash
-    this.origin = options.origin || new URL(this.baseUrl).origin;
     this.fetchImpl = options.fetch || globalThis.fetch.bind(globalThis);
   }
 
@@ -37,15 +35,12 @@ export class RondevuClient {
    */
   private async request<T>(
     endpoint: string,
-    options: RequestInit = {},
-    customHeaders?: Record<string, string>
+    options: RequestInit = {}
   ): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
 
     const headers: Record<string, string> = {
-      'Origin': this.origin,
       ...(options.headers as Record<string, string>),
-      ...(customHeaders || {}),
     };
 
     if (options.body) {
@@ -144,7 +139,6 @@ export class RondevuClient {
    * Sends an answer or candidate to an existing session
    *
    * @param request - Answer details including session code and signaling data
-   * @param customHeaders - Optional custom headers to send with the request
    * @returns Success confirmation
    *
    * @example
@@ -166,11 +160,11 @@ export class RondevuClient {
    * });
    * ```
    */
-  async sendAnswer(request: AnswerRequest, customHeaders?: Record<string, string>): Promise<AnswerResponse> {
+  async sendAnswer(request: AnswerRequest): Promise<AnswerResponse> {
     return this.request<AnswerResponse>('/answer', {
       method: 'POST',
       body: JSON.stringify(request),
-    }, customHeaders);
+    });
   }
 
   /**
@@ -178,7 +172,6 @@ export class RondevuClient {
    *
    * @param code - Session UUID
    * @param side - Which side is polling ('offerer' or 'answerer')
-   * @param customHeaders - Optional custom headers to send with the request
    * @returns Session data including offers, answers, and candidates
    *
    * @example
@@ -198,14 +191,13 @@ export class RondevuClient {
    */
   async poll(
     code: string,
-    side: Side,
-    customHeaders?: Record<string, string>
+    side: Side
   ): Promise<PollOffererResponse | PollAnswererResponse> {
     const request: PollRequest = { code, side };
     return this.request<PollOffererResponse | PollAnswererResponse>('/poll', {
       method: 'POST',
       body: JSON.stringify(request),
-    }, customHeaders);
+    });
   }
 
   /**

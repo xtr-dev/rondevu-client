@@ -161,8 +161,6 @@ export interface ErrorResponse {
 export interface RondevuClientOptions {
   /** Base URL of the Rondevu server (e.g., 'https://example.com') */
   baseUrl: string;
-  /** Origin header value for session isolation (defaults to baseUrl origin) */
-  origin?: string;
   /** Optional fetch implementation (for Node.js environments) */
   fetch?: typeof fetch;
 }
@@ -179,8 +177,6 @@ export interface RondevuOptions {
   baseUrl?: string;
   /** Peer identifier (optional, auto-generated if not provided) */
   peerId?: string;
-  /** Origin header value for session isolation (defaults to baseUrl origin) */
-  origin?: string;
   /** Optional fetch implementation (for Node.js environments) */
   fetch?: typeof fetch;
   /** WebRTC configuration (ICE servers, etc.) */
@@ -189,14 +185,6 @@ export interface RondevuOptions {
   pollingInterval?: number;
   /** Connection timeout in milliseconds (default: 30000) */
   connectionTimeout?: number;
-}
-
-/**
- * Options for connecting to a session
- */
-export interface ConnectOptions {
-  /** Use global origin (https://ronde.vu) instead of request origin for session isolation */
-  global?: boolean;
 }
 
 /**

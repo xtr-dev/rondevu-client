@@ -1,12 +1,16 @@
 # Rondevu
 
-🎯 Meet WebRTC peers by topic, by peer ID, or by connection ID.
+🎯 **Simple WebRTC peer signaling and discovery**
+
+Meet peers by topic, by peer ID, or by connection ID.
+
+---
 
 ## @xtr-dev/rondevu-client
 
 [![npm version](https://img.shields.io/npm/v/@xtr-dev/rondevu-client)](https://www.npmjs.com/package/@xtr-dev/rondevu-client)
 
-TypeScript Rondevu HTTP and WebRTC client, for simple peer discovery and connection.
+TypeScript client library for Rondevu peer signaling and WebRTC connection management. Handles automatic signaling, ICE candidate exchange, and connection establishment.
 
 ### Install
 
