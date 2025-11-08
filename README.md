@@ -19,7 +19,21 @@ npm install @xtr-dev/rondevu-client
 ```typescript
 import { Rondevu } from '@xtr-dev/rondevu-client';
 
-const rdv = new Rondevu({ baseUrl: 'https://server.com' });
+const rdv = new Rondevu({ 
+  baseUrl: 'https://server.com',
+  rtcConfig: {
+    iceServers: [
+      // your ICE servers here
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      {
+        urls: 'turn:relay1.example.com:3480',
+        username: 'example',
+        credential: 'example'
+      }
+    ]
+  }
+});
 
 // Connect by topic
 const conn = await rdv.join('room');
