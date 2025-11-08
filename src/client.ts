@@ -9,6 +9,7 @@ import {
   PollRequest,
   PollOffererResponse,
   PollAnswererResponse,
+  VersionResponse,
   HealthResponse,
   ErrorResponse,
   Side,
@@ -63,6 +64,24 @@ export class RondevuClient {
   }
 
   /**
+   * Gets server version information
+   *
+   * @returns Server version (git commit hash)
+   *
+   * @example
+   * ```typescript
+   * const client = new RondevuClient({ baseUrl: 'https://example.com' });
+   * const { version } = await client.getVersion();
+   * console.log('Server version:', version);
+   * ```
+   */
+  async getVersion(): Promise<VersionResponse> {
+    return this.request<VersionResponse>('/', {
+      method: 'GET',
+    });
+  }
+
+  /**
    * Lists all topics with peer counts
    *
    * @param page - Page number (starting from 1)
@@ -81,7 +100,7 @@ export class RondevuClient {
       page: page.toString(),
       limit: limit.toString(),
     });
-    return this.request<ListTopicsResponse>(`/?${params}`, {
+    return this.request<ListTopicsResponse>(`/topics?${params}`, {
       method: 'GET',
     });
   }

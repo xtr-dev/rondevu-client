@@ -35,6 +35,7 @@ export type {
   PollOffererResponse,
   PollAnswererResponse,
   PollResponse,
+  VersionResponse,
   HealthResponse,
   ErrorResponse,
   RondevuClientOptions,

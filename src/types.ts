@@ -141,6 +141,14 @@ export interface PollAnswererResponse {
 export type PollResponse = PollOffererResponse | PollAnswererResponse;
 
 /**
+ * Response from GET / - server version information
+ */
+export interface VersionResponse {
+  /** Git commit hash or version identifier */
+  version: string;
+}
+
+/**
  * Response from GET /health
  */
 export interface HealthResponse {
