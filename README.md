@@ -24,10 +24,12 @@ npm install @xtr-dev/rondevu-client
 
 ### Usage
 
+#### Browser
+
 ```typescript
 import { Rondevu } from '@xtr-dev/rondevu-client';
 
-const rdv = new Rondevu({ 
+const rdv = new Rondevu({
   baseUrl: 'https://server.com',
   rtcConfig: {
     iceServers: [
@@ -53,6 +55,44 @@ const conn = await rdv.connect('meeting-123');
 conn.on('connect', () => {
   const channel = conn.dataChannel('chat');
   channel.send('Hello!');
+});
+```
+
+#### Node.js
+
+In Node.js, you need to provide a WebRTC polyfill since WebRTC APIs are not natively available:
+
+```bash
+npm install @roamhq/wrtc
+# or
+npm install wrtc
+```
+
+```typescript
+import { Rondevu } from '@xtr-dev/rondevu-client';
+import wrtc from '@roamhq/wrtc';
+import fetch from 'node-fetch';
+
+const rdv = new Rondevu({
+  baseUrl: 'https://server.com',
+  fetch: fetch as any,
+  wrtc: {
+    RTCPeerConnection: wrtc.RTCPeerConnection,
+    RTCSessionDescription: wrtc.RTCSessionDescription,
+    RTCIceCandidate: wrtc.RTCIceCandidate,
+  },
+  rtcConfig: {
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' }
+    ]
+  }
+});
+
+// Rest is the same as browser usage
+const conn = await rdv.join('room');
+conn.on('connect', () => {
+  const channel = conn.dataChannel('chat');
+  channel.send('Hello from Node.js!');
 });
 ```
 

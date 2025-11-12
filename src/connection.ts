@@ -1,6 +1,6 @@
 import { EventEmitter } from './event-emitter.js';
 import { RondevuAPI } from './client.js';
-import { RondevuConnectionParams } from './types.js';
+import { RondevuConnectionParams, WebRTCPolyfill } from './types.js';
 
 /**
  * Represents a WebRTC connection with automatic signaling and ICE exchange
@@ -21,6 +21,8 @@ export class RondevuConnection extends EventEmitter {
   private connectionTimer?: ReturnType<typeof setTimeout>;
   private isPolling: boolean = false;
   private isClosed: boolean = false;
+  private wrtc?: WebRTCPolyfill;
+  private RTCIceCandidate: typeof RTCIceCandidate;
 
   constructor(params: RondevuConnectionParams, client: RondevuAPI) {
     super();
@@ -34,6 +36,10 @@ export class RondevuConnection extends EventEmitter {
     this.dataChannels = new Map();
     this.pollingIntervalMs = params.pollingInterval;
     this.connectionTimeoutMs = params.connectionTimeout;
+    this.wrtc = params.wrtc;
+
+    // Use injected WebRTC polyfill or fall back to global
+    this.RTCIceCandidate = params.wrtc?.RTCIceCandidate || globalThis.RTCIceCandidate;
 
     this.setupEventHandlers();
     this.startConnectionTimeout();
@@ -187,7 +193,7 @@ export class RondevuConnection extends EventEmitter {
           for (const candidateStr of offererResponse.answerCandidates) {
             try {
               const candidate = JSON.parse(candidateStr);
-              await this.pc.addIceCandidate(new RTCIceCandidate(candidate));
+              await this.pc.addIceCandidate(new this.RTCIceCandidate(candidate));
             } catch (err) {
               console.warn('Failed to add ICE candidate:', err);
             }
@@ -202,7 +208,7 @@ export class RondevuConnection extends EventEmitter {
           for (const candidateStr of answererResponse.offerCandidates) {
             try {
               const candidate = JSON.parse(candidateStr);
-              await this.pc.addIceCandidate(new RTCIceCandidate(candidate));
+              await this.pc.addIceCandidate(new this.RTCIceCandidate(candidate));
             } catch (err) {
               console.warn('Failed to add ICE candidate:', err);
             }

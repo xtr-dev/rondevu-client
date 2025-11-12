@@ -20,6 +20,7 @@ export type {
   ConnectionRole,
   RondevuConnectionParams,
   RondevuConnectionEvents,
+  WebRTCPolyfill,
   // Signaling types
   Side,
   Session,

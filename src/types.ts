@@ -178,6 +178,15 @@ export interface RondevuClientOptions {
 // ============================================================================
 
 /**
+ * WebRTC polyfill for Node.js and other non-browser platforms
+ */
+export interface WebRTCPolyfill {
+  RTCPeerConnection: typeof RTCPeerConnection;
+  RTCSessionDescription: typeof RTCSessionDescription;
+  RTCIceCandidate: typeof RTCIceCandidate;
+}
+
+/**
  * Configuration options for Rondevu WebRTC client
  */
 export interface RondevuOptions {
@@ -193,6 +202,8 @@ export interface RondevuOptions {
   pollingInterval?: number;
   /** Connection timeout in milliseconds (default: 30000) */
   connectionTimeout?: number;
+  /** WebRTC polyfill for Node.js (e.g., wrtc or @roamhq/wrtc) */
+  wrtc?: WebRTCPolyfill;
 }
 
 /**
@@ -222,6 +233,7 @@ export interface RondevuConnectionParams {
   remotePeerId: string;
   pollingInterval: number;
   connectionTimeout: number;
+  wrtc?: WebRTCPolyfill;
 }
 
 /**

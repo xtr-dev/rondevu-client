@@ -1,6 +1,6 @@
 import { RondevuAPI } from './client.js';
 import { RondevuConnection } from './connection.js';
-import { RondevuOptions, JoinOptions, RondevuConnectionParams } from './types.js';
+import { RondevuOptions, JoinOptions, RondevuConnectionParams, WebRTCPolyfill } from './types.js';
 
 /**
  * Main Rondevu WebRTC client with automatic connection management
@@ -14,6 +14,9 @@ export class Rondevu {
   private rtcConfig?: RTCConfiguration;
   private pollingInterval: number;
   private connectionTimeout: number;
+  private wrtc?: WebRTCPolyfill;
+  private RTCPeerConnection: typeof RTCPeerConnection;
+  private RTCIceCandidate: typeof RTCIceCandidate;
 
   /**
    * Creates a new Rondevu client instance
@@ -22,6 +25,7 @@ export class Rondevu {
   constructor(options: RondevuOptions = {}) {
     this.baseUrl = options.baseUrl || 'https://rondevu.xtrdev.workers.dev';
     this.fetchImpl = options.fetch;
+    this.wrtc = options.wrtc;
 
     this.api = new RondevuAPI({
       baseUrl: this.baseUrl,
@@ -33,6 +37,18 @@ export class Rondevu {
     this.rtcConfig = options.rtcConfig;
     this.pollingInterval = options.pollingInterval || 1000;
     this.connectionTimeout = options.connectionTimeout || 30000;
+
+    // Use injected WebRTC polyfill or fall back to global
+    this.RTCPeerConnection = options.wrtc?.RTCPeerConnection || globalThis.RTCPeerConnection;
+    this.RTCIceCandidate = options.wrtc?.RTCIceCandidate || globalThis.RTCIceCandidate;
+
+    if (!this.RTCPeerConnection) {
+      throw new Error(
+        'RTCPeerConnection not available. ' +
+        'In Node.js, provide a WebRTC polyfill via the wrtc option. ' +
+        'Install: npm install @roamhq/wrtc or npm install wrtc'
+      );
+    }
   }
 
   /**
@@ -57,7 +73,7 @@ export class Rondevu {
    */
   async create(id: string, topic: string): Promise<RondevuConnection> {
     // Create peer connection
-    const pc = new RTCPeerConnection(this.rtcConfig);
+    const pc = new this.RTCPeerConnection(this.rtcConfig);
 
     // Create initial data channel for negotiation (required for offer creation)
     pc.createDataChannel('_negotiation');
@@ -86,6 +102,7 @@ export class Rondevu {
       remotePeerId: '', // Will be populated when answer is received
       pollingInterval: this.pollingInterval,
       connectionTimeout: this.connectionTimeout,
+      wrtc: this.wrtc,
     };
 
     const connection = new RondevuConnection(connectionParams, this.api);
@@ -110,7 +127,7 @@ export class Rondevu {
     }
 
     // Create peer connection
-    const pc = new RTCPeerConnection(this.rtcConfig);
+    const pc = new this.RTCPeerConnection(this.rtcConfig);
 
     // Set remote offer
     await pc.setRemoteDescription({
@@ -142,6 +159,7 @@ export class Rondevu {
       remotePeerId: sessionData.peerId,
       pollingInterval: this.pollingInterval,
       connectionTimeout: this.connectionTimeout,
+      wrtc: this.wrtc,
     };
 
     const connection = new RondevuConnection(connectionParams, this.api);
