@@ -62,7 +62,7 @@ export class Rondevu {
   private async checkServerVersion(): Promise<void> {
     try {
       const { version: serverVersion } = await this.api.health();
-      const clientVersion = '0.3.3'; // Should match package.json
+      const clientVersion = '0.3.4'; // Should match package.json
 
       if (!this.isVersionCompatible(clientVersion, serverVersion)) {
         console.warn(
