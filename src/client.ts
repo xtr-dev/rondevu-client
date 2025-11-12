@@ -13,7 +13,7 @@ import {
   HealthResponse,
   ErrorResponse,
   Side,
-} from './types';
+} from './types.js';
 
 /**
  * HTTP API client for Rondevu peer signaling and discovery server

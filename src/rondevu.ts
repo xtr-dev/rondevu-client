@@ -1,6 +1,6 @@
-import { RondevuAPI } from './client';
-import { RondevuConnection } from './connection';
-import { RondevuOptions, JoinOptions, RondevuConnectionParams } from './types';
+import { RondevuAPI } from './client.js';
+import { RondevuConnection } from './connection.js';
+import { RondevuOptions, JoinOptions, RondevuConnectionParams } from './types.js';
 
 /**
  * Main Rondevu WebRTC client with automatic connection management

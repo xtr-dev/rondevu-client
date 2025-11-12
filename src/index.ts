@@ -4,13 +4,13 @@
  */
 
 // Export main WebRTC client class
-export { Rondevu } from './rondevu';
+export { Rondevu } from './rondevu.js';
 
 // Export connection class
-export { RondevuConnection } from './connection';
+export { RondevuConnection } from './connection.js';
 
 // Export low-level signaling API (for advanced usage)
-export { RondevuAPI } from './client';
+export { RondevuAPI } from './client.js';
 
 // Export all types
 export type {
@@ -39,4 +39,4 @@ export type {
   HealthResponse,
   ErrorResponse,
   RondevuClientOptions,
-} from './types';
+} from './types.js';

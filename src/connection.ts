@@ -1,6 +1,6 @@
-import { EventEmitter } from './event-emitter';
-import { RondevuAPI } from './client';
-import { RondevuConnectionParams } from './types';
+import { EventEmitter } from './event-emitter.js';
+import { RondevuAPI } from './client.js';
+import { RondevuConnectionParams } from './types.js';
 
 /**
  * Represents a WebRTC connection with automatic signaling and ICE exchange
