@@ -1,8 +1,8 @@
 # Rondevu
 
-🎯 **Simple WebRTC peer signaling and discovery**
+🎯 **Simple WebRTC peer signaling**
 
-Meet peers by topic, by peer ID, or by connection ID.
+Connect peers directly by ID with automatic WebRTC negotiation.
 
 **Related repositories:**
 - [rondevu-server](https://github.com/xtr-dev/rondevu-server) - HTTP signaling server
@@ -30,43 +30,37 @@ npm install @xtr-dev/rondevu-client
 import { Rondevu } from '@xtr-dev/rondevu-client';
 
 const rdv = new Rondevu({
-  baseUrl: 'https://server.com',
+  baseUrl: 'https://api.ronde.vu',
   rtcConfig: {
     iceServers: [
-      // your ICE servers here
       { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
-      {
-        urls: 'turn:relay1.example.com:3480',
-        username: 'example',
-        credential: 'example'
-      }
+      { urls: 'stun:stun1.l.google.com:19302' }
     ]
   }
 });
 
-// Connect by topic
-const conn = await rdv.join('room');
+// Create a connection with custom ID
+const connection = await rdv.create('my-room-123');
 
-// Or connect by ID
-const conn = await rdv.connect('meeting-123');
+// Or connect to an existing connection
+const connection = await rdv.connect('my-room-123');
 
-// Use the connection
-conn.on('connect', () => {
-  const channel = conn.dataChannel('chat');
+// Use data channels
+connection.on('connect', () => {
+  const channel = connection.dataChannel('chat');
   channel.send('Hello!');
+});
+
+connection.on('datachannel', (channel) => {
+  if (channel.label === 'chat') {
+    channel.onmessage = (event) => {
+      console.log('Received:', event.data);
+    };
+  }
 });
 ```
 
 #### Node.js
-
-In Node.js, you need to provide a WebRTC polyfill since WebRTC APIs are not natively available:
-
-```bash
-npm install @roamhq/wrtc
-# or
-npm install wrtc
-```
 
 ```typescript
 import { Rondevu } from '@xtr-dev/rondevu-client';
@@ -74,24 +68,19 @@ import wrtc from '@roamhq/wrtc';
 import fetch from 'node-fetch';
 
 const rdv = new Rondevu({
-  baseUrl: 'https://server.com',
+  baseUrl: 'https://api.ronde.vu',
   fetch: fetch as any,
   wrtc: {
     RTCPeerConnection: wrtc.RTCPeerConnection,
     RTCSessionDescription: wrtc.RTCSessionDescription,
     RTCIceCandidate: wrtc.RTCIceCandidate,
-  },
-  rtcConfig: {
-    iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' }
-    ]
   }
 });
 
-// Rest is the same as browser usage
-const conn = await rdv.join('room');
-conn.on('connect', () => {
-  const channel = conn.dataChannel('chat');
+const connection = await rdv.create('my-room-123');
+
+connection.on('connect', () => {
+  const channel = connection.dataChannel('chat');
   channel.send('Hello from Node.js!');
 });
 ```
@@ -99,23 +88,24 @@ conn.on('connect', () => {
 ### API
 
 **Main Methods:**
-- `rdv.join(topic)` - Auto-connect to first peer in topic
-- `rdv.join(topic, {filter})` - Connect to specific peer by ID
-- `rdv.create(id, topic)` - Create connection for others to join
-- `rdv.connect(id)` - Join connection by ID
+- `rdv.create(id)` - Create connection with custom ID
+- `rdv.connect(id)` - Connect to existing connection by ID
 
 **Connection Events:**
 - `connect` - Connection established
 - `disconnect` - Connection closed
-- `datachannel` - Remote peer created data channel
-- `stream` - Remote media stream received
-- `error` - Error occurred
+- `error` - Connection error
+- `datachannel` - New data channel received
+- `stream` - Media stream received
 
 **Connection Methods:**
-- `conn.dataChannel(label)` - Get or create data channel
-- `conn.addStream(stream)` - Add media stream
-- `conn.getPeerConnection()` - Get underlying RTCPeerConnection
-- `conn.close()` - Close connection
+- `connection.dataChannel(label)` - Get or create data channel
+- `connection.addStream(stream)` - Add media stream
+- `connection.close()` - Close connection
+
+### Version Compatibility
+
+The client automatically checks server compatibility via the `/health` endpoint. If the server version is incompatible, an error will be thrown during initialization.
 
 ### License
 

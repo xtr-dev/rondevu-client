@@ -8,64 +8,7 @@
 export type Side = 'offerer' | 'answerer';
 
 /**
- * Session information returned from discovery endpoints
- */
-export interface Session {
-  /** Unique session identifier (UUID) */
-  code: string;
-  /** Peer identifier/metadata */
-  peerId: string;
-  /** Signaling data for peer connection */
-  offer: string;
-  /** Additional signaling data from offerer */
-  offerCandidates: string[];
-  /** Unix timestamp when session was created */
-  createdAt: number;
-  /** Unix timestamp when session expires */
-  expiresAt: number;
-}
-
-/**
- * Topic information with peer count
- */
-export interface TopicInfo {
-  /** Topic identifier */
-  topic: string;
-  /** Number of available peers in this topic */
-  count: number;
-}
-
-/**
- * Pagination information
- */
-export interface Pagination {
-  /** Current page number */
-  page: number;
-  /** Results per page */
-  limit: number;
-  /** Total number of results */
-  total: number;
-  /** Whether there are more results available */
-  hasMore: boolean;
-}
-
-/**
- * Response from GET / - list all topics
- */
-export interface ListTopicsResponse {
-  topics: TopicInfo[];
-  pagination: Pagination;
-}
-
-/**
- * Response from GET /:topic/sessions - list sessions in a topic
- */
-export interface ListSessionsResponse {
-  sessions: Session[];
-}
-
-/**
- * Request body for POST /:topic/offer
+ * Request body for POST /offer
  */
 export interface CreateOfferRequest {
   /** Peer identifier/metadata (max 1024 characters) */
@@ -77,7 +20,7 @@ export interface CreateOfferRequest {
 }
 
 /**
- * Response from POST /:topic/offer
+ * Response from POST /offer
  */
 export interface CreateOfferResponse {
   /** Unique session identifier (UUID) */
@@ -154,6 +97,7 @@ export interface VersionResponse {
 export interface HealthResponse {
   status: 'ok';
   timestamp: number;
+  version: string;
 }
 
 /**
@@ -207,16 +151,6 @@ export interface RondevuOptions {
 }
 
 /**
- * Options for joining a topic
- */
-export interface JoinOptions {
-  /** Filter function to select specific sessions */
-  filter?: (session: { code: string; peerId: string }) => boolean;
-  /** Selection strategy for choosing a session */
-  select?: 'first' | 'newest' | 'oldest' | 'random';
-}
-
-/**
  * Connection role - whether this peer is creating or answering
  */
 export type ConnectionRole = 'offerer' | 'answerer';
@@ -226,7 +160,7 @@ export type ConnectionRole = 'offerer' | 'answerer';
  */
 export interface RondevuConnectionParams {
   id: string;
-  topic: string;
+  topic?: string;
   role: ConnectionRole;
   pc: RTCPeerConnection;
   localPeerId: string;

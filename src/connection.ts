@@ -7,7 +7,6 @@ import { RondevuConnectionParams, WebRTCPolyfill } from './types.js';
  */
 export class RondevuConnection extends EventEmitter {
   readonly id: string;
-  readonly topic: string;
   readonly role: 'offerer' | 'answerer';
   readonly remotePeerId: string;
 
@@ -27,7 +26,6 @@ export class RondevuConnection extends EventEmitter {
   constructor(params: RondevuConnectionParams, client: RondevuAPI) {
     super();
     this.id = params.id;
-    this.topic = params.topic;
     this.role = params.role;
     this.pc = params.pc;
     this.localPeerId = params.localPeerId;

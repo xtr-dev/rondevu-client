@@ -16,18 +16,12 @@ export { RondevuAPI } from './client.js';
 export type {
   // WebRTC types
   RondevuOptions,
-  JoinOptions,
   ConnectionRole,
   RondevuConnectionParams,
   RondevuConnectionEvents,
   WebRTCPolyfill,
   // Signaling types
   Side,
-  Session,
-  TopicInfo,
-  Pagination,
-  ListTopicsResponse,
-  ListSessionsResponse,
   CreateOfferRequest,
   CreateOfferResponse,
   AnswerRequest,

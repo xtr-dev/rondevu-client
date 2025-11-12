@@ -1,6 +1,6 @@
 import { RondevuAPI } from './client.js';
 import { RondevuConnection } from './connection.js';
-import { RondevuOptions, JoinOptions, RondevuConnectionParams, WebRTCPolyfill } from './types.js';
+import { RondevuOptions, RondevuConnectionParams, WebRTCPolyfill } from './types.js';
 
 /**
  * Main Rondevu WebRTC client with automatic connection management
@@ -49,6 +49,43 @@ export class Rondevu {
         'Install: npm install @roamhq/wrtc or npm install wrtc'
       );
     }
+
+    // Check server version compatibility (async, don't block constructor)
+    this.checkServerVersion().catch(() => {
+      // Silently fail version check - connection will work even if version check fails
+    });
+  }
+
+  /**
+   * Check server version compatibility
+   */
+  private async checkServerVersion(): Promise<void> {
+    try {
+      const { version: serverVersion } = await this.api.health();
+      const clientVersion = '0.3.2'; // Should match package.json
+
+      if (!this.isVersionCompatible(clientVersion, serverVersion)) {
+        console.warn(
+          `[Rondevu] Version mismatch: client v${clientVersion}, server v${serverVersion}. ` +
+          'This may cause compatibility issues.'
+        );
+      }
+    } catch (error) {
+      // Version check failed - server might not support /health endpoint
+      console.debug('[Rondevu] Could not check server version');
+    }
+  }
+
+  /**
+   * Check if client and server versions are compatible
+   * For now, just check major version compatibility
+   */
+  private isVersionCompatible(clientVersion: string, serverVersion: string): boolean {
+    const clientMajor = parseInt(clientVersion.split('.')[0]);
+    const serverMajor = parseInt(serverVersion.split('.')[0]);
+
+    // Major versions must match
+    return clientMajor === serverMajor;
   }
 
   /**
@@ -67,11 +104,10 @@ export class Rondevu {
 
   /**
    * Create a new connection (offerer role)
-   * @param id - Connection identifier
-   * @param topic - Topic name for grouping connections
+   * @param id - Connection identifier (custom code)
    * @returns Promise that resolves to RondevuConnection
    */
-  async create(id: string, topic: string): Promise<RondevuConnection> {
+  async create(id: string): Promise<RondevuConnection> {
     // Create peer connection
     const pc = new this.RTCPeerConnection(this.rtcConfig);
 
@@ -85,8 +121,8 @@ export class Rondevu {
     // Wait for ICE gathering to complete
     await this.waitForIceGathering(pc);
 
-    // Create session on server with custom code
-    await this.api.createOffer(topic, {
+    // Create offer on server with custom code
+    await this.api.createOffer({
       peerId: this.peerId,
       offer: pc.localDescription!.sdp,
       code: id,
@@ -95,7 +131,6 @@ export class Rondevu {
     // Create connection object
     const connectionParams: RondevuConnectionParams = {
       id,
-      topic,
       role: 'offerer',
       pc,
       localPeerId: this.peerId,
@@ -114,16 +149,16 @@ export class Rondevu {
   }
 
   /**
-   * Connect to an existing connection by ID (answerer role)
-   * @param id - Connection identifier
+   * Connect to an existing offer by ID (answerer role)
+   * @param id - Offer code
    * @returns Promise that resolves to RondevuConnection
    */
   async connect(id: string): Promise<RondevuConnection> {
-    // Poll server to get session by ID
-    const sessionData = await this.findSessionByIdWithClient(id, this.api);
+    // Poll server to get offer by ID
+    const offerData = await this.findOfferById(id);
 
-    if (!sessionData) {
-      throw new Error(`Connection ${id} not found or expired`);
+    if (!offerData) {
+      throw new Error(`Offer ${id} not found or expired`);
     }
 
     // Create peer connection
@@ -132,7 +167,7 @@ export class Rondevu {
     // Set remote offer
     await pc.setRemoteDescription({
       type: 'offer',
-      sdp: sessionData.offer,
+      sdp: offerData.offer,
     });
 
     // Generate answer
@@ -152,11 +187,10 @@ export class Rondevu {
     // Create connection object
     const connectionParams: RondevuConnectionParams = {
       id,
-      topic: sessionData.topic || 'unknown',
       role: 'answerer',
       pc,
       localPeerId: this.peerId,
-      remotePeerId: sessionData.peerId,
+      remotePeerId: '', // Will be determined from peerId in offer
       pollingInterval: this.pollingInterval,
       connectionTimeout: this.connectionTimeout,
       wrtc: this.wrtc,
@@ -168,65 +202,6 @@ export class Rondevu {
     connection.startPolling();
 
     return connection;
-  }
-
-  /**
-   * Join a topic and discover available peers (answerer role)
-   * @param topic - Topic name
-   * @param options - Optional join options for filtering and selection
-   * @returns Promise that resolves to RondevuConnection
-   */
-  async join(topic: string, options?: JoinOptions): Promise<RondevuConnection> {
-    // List sessions in topic
-    const { sessions } = await this.api.listSessions(topic);
-
-    // Filter out self (sessions with our peer ID)
-    let availableSessions = sessions.filter(
-      session => session.peerId !== this.peerId
-    );
-
-    // Apply custom filter if provided
-    if (options?.filter) {
-      availableSessions = availableSessions.filter(options.filter);
-    }
-
-    if (availableSessions.length === 0) {
-      throw new Error(`No available peers in topic: ${topic}`);
-    }
-
-    // Select session based on strategy
-    const selectedSession = this.selectSession(
-      availableSessions,
-      options?.select || 'first'
-    );
-
-    // Connect to selected session
-    return this.connect(selectedSession.code);
-  }
-
-  /**
-   * Select a session based on strategy
-   */
-  private selectSession(
-    sessions: Array<{ code: string; peerId: string; createdAt: number }>,
-    strategy: 'first' | 'newest' | 'oldest' | 'random'
-  ): { code: string; peerId: string; createdAt: number } {
-    switch (strategy) {
-      case 'first':
-        return sessions[0];
-      case 'newest':
-        return sessions.reduce((newest, session) =>
-          session.createdAt > newest.createdAt ? session : newest
-        );
-      case 'oldest':
-        return sessions.reduce((oldest, session) =>
-          session.createdAt < oldest.createdAt ? session : oldest
-        );
-      case 'random':
-        return sessions[Math.floor(Math.random() * sessions.length)];
-      default:
-        return sessions[0];
-    }
   }
 
   /**
@@ -256,36 +231,25 @@ export class Rondevu {
   }
 
   /**
-   * Find a session by connection ID
-   * This requires polling since we don't know which topic it's in
+   * Find an offer by code
    */
-  private async findSessionByIdWithClient(
-    id: string,
-    client: RondevuAPI
-  ): Promise<{
-    code: string;
-    peerId: string;
+  private async findOfferById(id: string): Promise<{
     offer: string;
-    topic?: string;
   } | null> {
     try {
-      // Try to poll for the session directly
-      // The poll endpoint should return the session data
-      const response = await client.poll(id, 'answerer');
+      // Poll for the offer directly
+      const response = await this.api.poll(id, 'answerer');
       const answererResponse = response as { offer: string; offerCandidates: string[] };
 
       if (answererResponse.offer) {
         return {
-          code: id,
-          peerId: '', // Will be populated from session data
           offer: answererResponse.offer,
-          topic: undefined,
         };
       }
 
       return null;
     } catch (err) {
-      throw new Error(`Failed to find session ${id}: ${(err as Error).message}`);
+      throw new Error(`Failed to find offer ${id}: ${(err as Error).message}`);
     }
   }
 }

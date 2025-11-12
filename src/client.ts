@@ -1,7 +1,5 @@
 import {
   RondevuClientOptions,
-  ListTopicsResponse,
-  ListSessionsResponse,
   CreateOfferRequest,
   CreateOfferResponse,
   AnswerRequest,
@@ -16,7 +14,7 @@ import {
 } from './types.js';
 
 /**
- * HTTP API client for Rondevu peer signaling and discovery server
+ * HTTP API client for Rondevu peer signaling server
  */
 export class RondevuAPI {
   private readonly baseUrl: string;
@@ -66,7 +64,7 @@ export class RondevuAPI {
   /**
    * Gets server version information
    *
-   * @returns Server version (git commit hash)
+   * @returns Server version
    *
    * @example
    * ```typescript
@@ -82,82 +80,33 @@ export class RondevuAPI {
   }
 
   /**
-   * Lists all topics with peer counts
+   * Creates a new offer
    *
-   * @param page - Page number (starting from 1)
-   * @param limit - Results per page (max 1000)
-   * @returns List of topics with pagination info
-   *
-   * @example
-   * ```typescript
-   * const api = new RondevuAPI({ baseUrl: 'https://example.com' });
-   * const { topics, pagination } = await api.listTopics();
-   * console.log(`Found ${topics.length} topics`);
-   * ```
-   */
-  async listTopics(page = 1, limit = 100): Promise<ListTopicsResponse> {
-    const params = new URLSearchParams({
-      page: page.toString(),
-      limit: limit.toString(),
-    });
-    return this.request<ListTopicsResponse>(`/topics?${params}`, {
-      method: 'GET',
-    });
-  }
-
-  /**
-   * Discovers available peers for a given topic
-   *
-   * @param topic - Topic identifier
-   * @returns List of available sessions
+   * @param request - Offer details including peer ID, signaling data, and optional custom code
+   * @returns Unique offer code (UUID or custom code)
    *
    * @example
    * ```typescript
    * const api = new RondevuAPI({ baseUrl: 'https://example.com' });
-   * const { sessions } = await api.listSessions('my-room');
-   * const otherPeers = sessions.filter(s => s.peerId !== myPeerId);
-   * ```
-   */
-  async listSessions(topic: string): Promise<ListSessionsResponse> {
-    return this.request<ListSessionsResponse>(`/${encodeURIComponent(topic)}/sessions`, {
-      method: 'GET',
-    });
-  }
-
-  /**
-   * Announces peer availability and creates a new session
-   *
-   * @param topic - Topic identifier for grouping peers (max 1024 characters)
-   * @param request - Offer details including peer ID and signaling data
-   * @returns Unique session code (UUID)
-   *
-   * @example
-   * ```typescript
-   * const api = new RondevuAPI({ baseUrl: 'https://example.com' });
-   * const { code } = await api.createOffer('my-room', {
+   * const { code } = await api.createOffer({
    *   peerId: 'peer-123',
-   *   offer: signalingData
+   *   offer: signalingData,
+   *   code: 'my-custom-code' // optional
    * });
-   * console.log('Session code:', code);
+   * console.log('Offer code:', code);
    * ```
    */
-  async createOffer(
-    topic: string,
-    request: CreateOfferRequest
-  ): Promise<CreateOfferResponse> {
-    return this.request<CreateOfferResponse>(
-      `/${encodeURIComponent(topic)}/offer`,
-      {
-        method: 'POST',
-        body: JSON.stringify(request),
-      }
-    );
+  async createOffer(request: CreateOfferRequest): Promise<CreateOfferResponse> {
+    return this.request<CreateOfferResponse>('/offer', {
+      method: 'POST',
+      body: JSON.stringify(request),
+    });
   }
 
   /**
-   * Sends an answer or candidate to an existing session
+   * Sends an answer or candidate to an existing offer
    *
-   * @param request - Answer details including session code and signaling data
+   * @param request - Answer details including offer code and signaling data
    * @returns Success confirmation
    *
    * @example
@@ -166,14 +115,14 @@ export class RondevuAPI {
    *
    * // Send answer
    * await api.sendAnswer({
-   *   code: sessionCode,
+   *   code: offerCode,
    *   answer: answerData,
    *   side: 'answerer'
    * });
    *
    * // Send candidate
    * await api.sendAnswer({
-   *   code: sessionCode,
+   *   code: offerCode,
    *   candidate: candidateData,
    *   side: 'offerer'
    * });
@@ -187,24 +136,24 @@ export class RondevuAPI {
   }
 
   /**
-   * Polls for session data from the other peer
+   * Polls for offer data from the other peer
    *
-   * @param code - Session UUID
+   * @param code - Offer code
    * @param side - Which side is polling ('offerer' or 'answerer')
-   * @returns Session data including offers, answers, and candidates
+   * @returns Offer data including offers, answers, and candidates
    *
    * @example
    * ```typescript
    * const api = new RondevuAPI({ baseUrl: 'https://example.com' });
    *
    * // Offerer polls for answer
-   * const offererData = await api.poll(sessionCode, 'offerer');
+   * const offererData = await api.poll(offerCode, 'offerer');
    * if (offererData.answer) {
    *   console.log('Received answer:', offererData.answer);
    * }
    *
    * // Answerer polls for offer
-   * const answererData = await api.poll(sessionCode, 'answerer');
+   * const answererData = await api.poll(offerCode, 'answerer');
    * console.log('Received offer:', answererData.offer);
    * ```
    */
@@ -220,15 +169,16 @@ export class RondevuAPI {
   }
 
   /**
-   * Checks server health
+   * Checks server health and version
    *
-   * @returns Health status and timestamp
+   * @returns Health status, timestamp, and version
    *
    * @example
    * ```typescript
    * const api = new RondevuAPI({ baseUrl: 'https://example.com' });
    * const health = await api.health();
    * console.log('Server status:', health.status);
+   * console.log('Server version:', health.version);
    * ```
    */
   async health(): Promise<HealthResponse> {
