@@ -186,4 +186,23 @@ export class RondevuAPI {
       method: 'GET',
     });
   }
+
+  /**
+   * Ends a session by deleting the offer from the server
+   *
+   * @param code - The offer code
+   * @returns Success confirmation
+   *
+   * @example
+   * ```typescript
+   * const api = new RondevuAPI({ baseUrl: 'https://example.com' });
+   * await api.leave('my-offer-code');
+   * ```
+   */
+  async leave(code: string): Promise<{ success: boolean }> {
+    return this.request<{ success: boolean }>('/leave', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    });
+  }
 }

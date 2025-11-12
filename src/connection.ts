@@ -20,6 +20,7 @@ export class RondevuConnection extends EventEmitter {
   private connectionTimer?: ReturnType<typeof setTimeout>;
   private isPolling: boolean = false;
   private isClosed: boolean = false;
+  private hasConnected: boolean = false;
   private wrtc?: WebRTCPolyfill;
   private RTCIceCandidate: typeof RTCIceCandidate;
 
@@ -94,9 +95,12 @@ export class RondevuConnection extends EventEmitter {
 
     switch (state) {
       case 'connected':
-        this.clearConnectionTimeout();
-        this.stopPolling();
-        this.emit('connect');
+        if (!this.hasConnected) {
+          this.hasConnected = true;
+          this.clearConnectionTimeout();
+          this.stopPolling();
+          this.emit('connect');
+        }
         break;
 
       case 'disconnected':
@@ -281,6 +285,20 @@ export class RondevuConnection extends EventEmitter {
       clearTimeout(this.connectionTimer);
       this.connectionTimer = undefined;
     }
+  }
+
+  /**
+   * Leave the session by deleting the offer on the server and closing the connection
+   * This ends the session for all connected peers
+   */
+  async leave(): Promise<void> {
+    try {
+      await this.client.leave(this.id);
+    } catch (err) {
+      // Ignore errors - session might already be expired
+      console.debug('Leave error (ignored):', err);
+    }
+    this.close();
   }
 
   /**
