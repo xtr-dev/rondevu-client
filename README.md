@@ -39,11 +39,11 @@ const rdv = new Rondevu({
   }
 });
 
-// Create a connection with custom ID
-const connection = await rdv.create('my-room-123');
+// Create an offer with custom ID
+const connection = await rdv.offer('my-room-123');
 
-// Or connect to an existing connection
-const connection = await rdv.connect('my-room-123');
+// Or answer an existing offer
+const connection = await rdv.answer('my-room-123');
 
 // Use data channels
 connection.on('connect', () => {
@@ -77,7 +77,7 @@ const rdv = new Rondevu({
   }
 });
 
-const connection = await rdv.create('my-room-123');
+const connection = await rdv.offer('my-room-123');
 
 connection.on('connect', () => {
   const channel = connection.dataChannel('chat');
@@ -88,8 +88,8 @@ connection.on('connect', () => {
 ### API
 
 **Main Methods:**
-- `rdv.create(id)` - Create connection with custom ID
-- `rdv.connect(id)` - Connect to existing connection by ID
+- `rdv.offer(id)` - Create an offer with custom ID
+- `rdv.answer(id)` - Answer an existing offer by ID
 
 **Connection Events:**
 - `connect` - Connection established

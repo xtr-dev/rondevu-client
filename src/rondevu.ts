@@ -62,7 +62,7 @@ export class Rondevu {
   private async checkServerVersion(): Promise<void> {
     try {
       const { version: serverVersion } = await this.api.health();
-      const clientVersion = '0.3.2'; // Should match package.json
+      const clientVersion = '0.3.3'; // Should match package.json
 
       if (!this.isVersionCompatible(clientVersion, serverVersion)) {
         console.warn(
@@ -103,11 +103,11 @@ export class Rondevu {
   }
 
   /**
-   * Create a new connection (offerer role)
-   * @param id - Connection identifier (custom code)
+   * Create an offer (offerer role)
+   * @param id - Offer identifier (custom code)
    * @returns Promise that resolves to RondevuConnection
    */
-  async create(id: string): Promise<RondevuConnection> {
+  async offer(id: string): Promise<RondevuConnection> {
     // Create peer connection
     const pc = new this.RTCPeerConnection(this.rtcConfig);
 
@@ -149,11 +149,11 @@ export class Rondevu {
   }
 
   /**
-   * Connect to an existing offer by ID (answerer role)
+   * Answer an existing offer by ID (answerer role)
    * @param id - Offer code
    * @returns Promise that resolves to RondevuConnection
    */
-  async connect(id: string): Promise<RondevuConnection> {
+  async answer(id: string): Promise<RondevuConnection> {
     // Poll server to get offer by ID
     const offerData = await this.findOfferById(id);
 
