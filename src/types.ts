@@ -190,7 +190,7 @@ export interface WebRTCPolyfill {
  * Configuration options for Rondevu WebRTC client
  */
 export interface RondevuOptions {
-  /** Base URL of the Rondevu server (defaults to 'https://rondevu.xtrdev.workers.dev') */
+  /** Base URL of the Rondevu server (defaults to 'https://api.ronde.vu') */
   baseUrl?: string;
   /** Peer identifier (optional, auto-generated if not provided) */
   peerId?: string;

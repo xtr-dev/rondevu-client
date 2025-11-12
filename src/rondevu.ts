@@ -23,7 +23,7 @@ export class Rondevu {
    * @param options - Client configuration options
    */
   constructor(options: RondevuOptions = {}) {
-    this.baseUrl = options.baseUrl || 'https://rondevu.xtrdev.workers.dev';
+    this.baseUrl = options.baseUrl || 'https://api.ronde.vu';
     this.fetchImpl = options.fetch;
     this.wrtc = options.wrtc;
 
