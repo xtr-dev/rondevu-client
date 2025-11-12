@@ -9,8 +9,8 @@ export { Rondevu } from './rondevu';
 // Export connection class
 export { RondevuConnection } from './connection';
 
-// Export low-level signaling client (for advanced usage)
-export { RondevuClient } from './client';
+// Export low-level signaling API (for advanced usage)
+export { RondevuAPI } from './client';
 
 // Export all types
 export type {

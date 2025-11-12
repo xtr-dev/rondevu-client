@@ -1,5 +1,5 @@
 import { EventEmitter } from './event-emitter';
-import { RondevuClient } from './client';
+import { RondevuAPI } from './client';
 import { RondevuConnectionParams } from './types';
 
 /**
@@ -12,7 +12,7 @@ export class RondevuConnection extends EventEmitter {
   readonly remotePeerId: string;
 
   private pc: RTCPeerConnection;
-  private client: RondevuClient;
+  private client: RondevuAPI;
   private localPeerId: string;
   private dataChannels: Map<string, RTCDataChannel>;
   private pollingInterval?: ReturnType<typeof setInterval>;
@@ -22,7 +22,7 @@ export class RondevuConnection extends EventEmitter {
   private isPolling: boolean = false;
   private isClosed: boolean = false;
 
-  constructor(params: RondevuConnectionParams, client: RondevuClient) {
+  constructor(params: RondevuConnectionParams, client: RondevuAPI) {
     super();
     this.id = params.id;
     this.topic = params.topic;

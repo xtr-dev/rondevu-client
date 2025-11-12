@@ -16,14 +16,14 @@ import {
 } from './types';
 
 /**
- * HTTP client for Rondevu peer signaling and discovery server
+ * HTTP API client for Rondevu peer signaling and discovery server
  */
-export class RondevuClient {
+export class RondevuAPI {
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
 
   /**
-   * Creates a new Rondevu client instance
+   * Creates a new Rondevu API client instance
    * @param options - Client configuration options
    */
   constructor(options: RondevuClientOptions) {
@@ -70,8 +70,8 @@ export class RondevuClient {
    *
    * @example
    * ```typescript
-   * const client = new RondevuClient({ baseUrl: 'https://example.com' });
-   * const { version } = await client.getVersion();
+   * const api = new RondevuAPI({ baseUrl: 'https://example.com' });
+   * const { version } = await api.getVersion();
    * console.log('Server version:', version);
    * ```
    */
@@ -90,8 +90,8 @@ export class RondevuClient {
    *
    * @example
    * ```typescript
-   * const client = new RondevuClient({ baseUrl: 'https://example.com' });
-   * const { topics, pagination } = await client.listTopics();
+   * const api = new RondevuAPI({ baseUrl: 'https://example.com' });
+   * const { topics, pagination } = await api.listTopics();
    * console.log(`Found ${topics.length} topics`);
    * ```
    */
@@ -113,8 +113,8 @@ export class RondevuClient {
    *
    * @example
    * ```typescript
-   * const client = new RondevuClient({ baseUrl: 'https://example.com' });
-   * const { sessions } = await client.listSessions('my-room');
+   * const api = new RondevuAPI({ baseUrl: 'https://example.com' });
+   * const { sessions } = await api.listSessions('my-room');
    * const otherPeers = sessions.filter(s => s.peerId !== myPeerId);
    * ```
    */
@@ -133,8 +133,8 @@ export class RondevuClient {
    *
    * @example
    * ```typescript
-   * const client = new RondevuClient({ baseUrl: 'https://example.com' });
-   * const { code } = await client.createOffer('my-room', {
+   * const api = new RondevuAPI({ baseUrl: 'https://example.com' });
+   * const { code } = await api.createOffer('my-room', {
    *   peerId: 'peer-123',
    *   offer: signalingData
    * });
@@ -162,17 +162,17 @@ export class RondevuClient {
    *
    * @example
    * ```typescript
-   * const client = new RondevuClient({ baseUrl: 'https://example.com' });
+   * const api = new RondevuAPI({ baseUrl: 'https://example.com' });
    *
    * // Send answer
-   * await client.sendAnswer({
+   * await api.sendAnswer({
    *   code: sessionCode,
    *   answer: answerData,
    *   side: 'answerer'
    * });
    *
    * // Send candidate
-   * await client.sendAnswer({
+   * await api.sendAnswer({
    *   code: sessionCode,
    *   candidate: candidateData,
    *   side: 'offerer'
@@ -195,16 +195,16 @@ export class RondevuClient {
    *
    * @example
    * ```typescript
-   * const client = new RondevuClient({ baseUrl: 'https://example.com' });
+   * const api = new RondevuAPI({ baseUrl: 'https://example.com' });
    *
    * // Offerer polls for answer
-   * const offererData = await client.poll(sessionCode, 'offerer');
+   * const offererData = await api.poll(sessionCode, 'offerer');
    * if (offererData.answer) {
    *   console.log('Received answer:', offererData.answer);
    * }
    *
    * // Answerer polls for offer
-   * const answererData = await client.poll(sessionCode, 'answerer');
+   * const answererData = await api.poll(sessionCode, 'answerer');
    * console.log('Received offer:', answererData.offer);
    * ```
    */
@@ -226,8 +226,8 @@ export class RondevuClient {
    *
    * @example
    * ```typescript
-   * const client = new RondevuClient({ baseUrl: 'https://example.com' });
-   * const health = await client.health();
+   * const api = new RondevuAPI({ baseUrl: 'https://example.com' });
+   * const health = await api.health();
    * console.log('Server status:', health.status);
    * ```
    */
