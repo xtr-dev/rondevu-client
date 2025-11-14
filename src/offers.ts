@@ -24,10 +24,18 @@ export interface Offer {
   answeredAt?: number;
 }
 
+/**
+ * RTCIceCandidateInit interface for environments without native WebRTC types
+ */
+export interface RTCIceCandidateInit {
+  candidate?: string;
+  sdpMid?: string | null;
+  sdpMLineIndex?: number | null;
+  usernameFragment?: string | null;
+}
+
 export interface IceCandidate {
-  candidate: string;
-  sdpMid: string | null;
-  sdpMLineIndex: number | null;
+  candidate: RTCIceCandidateInit; // Full candidate object
   peerId: string;
   role: 'offerer' | 'answerer';
   createdAt: number;
@@ -282,11 +290,7 @@ export class RondevuOffers {
    */
   async addIceCandidates(
     offerId: string,
-    candidates: Array<{
-      candidate: string;
-      sdpMid?: string | null;
-      sdpMLineIndex?: number | null;
-    }>
+    candidates: RTCIceCandidateInit[]
   ): Promise<void> {
     const response = await this.fetchFn(`${this.baseUrl}/offers/${encodeURIComponent(offerId)}/ice-candidates`, {
       method: 'POST',

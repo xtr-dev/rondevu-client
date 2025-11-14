@@ -1,4 +1,4 @@
-import { RondevuOffers } from './offers.js';
+import { RondevuOffers, RTCIceCandidateInit } from './offers.js';
 
 /**
  * Events emitted by RondevuConnection
@@ -60,11 +60,7 @@ export class RondevuConnection {
   private lastIceTimestamp: number = Date.now();
   private eventListeners: Map<keyof RondevuConnectionEvents, Set<Function>> = new Map();
   private dataChannel?: RTCDataChannel;
-  private pendingIceCandidates: Array<{
-    candidate: string;
-    sdpMid: string | null;
-    sdpMLineIndex: number | null;
-  }> = [];
+  private pendingIceCandidates: RTCIceCandidateInit[] = [];
 
   /**
    * Current connection state
@@ -107,10 +103,12 @@ export class RondevuConnection {
   private setupPeerConnection(): void {
     this.pc.onicecandidate = async (event) => {
       if (event.candidate) {
-        const candidateData = {
+        // Convert RTCIceCandidate to RTCIceCandidateInit (plain object)
+        const candidateData: RTCIceCandidateInit = {
           candidate: event.candidate.candidate,
           sdpMid: event.candidate.sdpMid,
           sdpMLineIndex: event.candidate.sdpMLineIndex,
+          usernameFragment: event.candidate.usernameFragment,
         };
 
         if (this.offerId) {
@@ -282,14 +280,10 @@ export class RondevuConnection {
           this.lastIceTimestamp
         );
 
-        for (const candidate of candidates) {
-          // Create ICE candidate with all fields
-          await this.pc.addIceCandidate(new RTCIceCandidate({
-            candidate: candidate.candidate,
-            sdpMid: candidate.sdpMid ?? undefined,
-            sdpMLineIndex: candidate.sdpMLineIndex ?? undefined,
-          }));
-          this.lastIceTimestamp = candidate.createdAt;
+        for (const cand of candidates) {
+          // Use the candidate object directly - it's already RTCIceCandidateInit
+          await this.pc.addIceCandidate(new RTCIceCandidate(cand.candidate));
+          this.lastIceTimestamp = cand.createdAt;
         }
       } catch (err) {
         console.error('Error polling for ICE candidates:', err);
