@@ -57,7 +57,7 @@ export class RondevuConnection {
   private role?: 'offerer' | 'answerer';
   private icePollingInterval?: ReturnType<typeof setInterval>;
   private answerPollingInterval?: ReturnType<typeof setInterval>;
-  private lastIceTimestamp: number = Date.now();
+  private lastIceTimestamp: number = 0;  // Start at 0 to get all candidates on first poll
   private eventListeners: Map<keyof RondevuConnectionEvents, Set<Function>> = new Map();
   private dataChannel?: RTCDataChannel;
   private pendingIceCandidates: RTCIceCandidateInit[] = [];
