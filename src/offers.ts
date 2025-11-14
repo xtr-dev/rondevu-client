@@ -26,6 +26,8 @@ export interface Offer {
 
 export interface IceCandidate {
   candidate: string;
+  sdpMid: string | null;
+  sdpMLineIndex: number | null;
   peerId: string;
   role: 'offerer' | 'answerer';
   createdAt: number;
@@ -278,7 +280,14 @@ export class RondevuOffers {
   /**
    * Post ICE candidates for an offer
    */
-  async addIceCandidates(offerId: string, candidates: string[]): Promise<void> {
+  async addIceCandidates(
+    offerId: string,
+    candidates: Array<{
+      candidate: string;
+      sdpMid?: string | null;
+      sdpMLineIndex?: number | null;
+    }>
+  ): Promise<void> {
     const response = await this.fetchFn(`${this.baseUrl}/offers/${encodeURIComponent(offerId)}/ice-candidates`, {
       method: 'POST',
       headers: {

@@ -60,7 +60,11 @@ export class RondevuConnection {
   private lastIceTimestamp: number = Date.now();
   private eventListeners: Map<keyof RondevuConnectionEvents, Set<Function>> = new Map();
   private dataChannel?: RTCDataChannel;
-  private pendingIceCandidates: string[] = [];
+  private pendingIceCandidates: Array<{
+    candidate: string;
+    sdpMid: string | null;
+    sdpMLineIndex: number | null;
+  }> = [];
 
   /**
    * Current connection state
@@ -103,18 +107,22 @@ export class RondevuConnection {
   private setupPeerConnection(): void {
     this.pc.onicecandidate = async (event) => {
       if (event.candidate) {
-        const candidateString = event.candidate.candidate;
+        const candidateData = {
+          candidate: event.candidate.candidate,
+          sdpMid: event.candidate.sdpMid,
+          sdpMLineIndex: event.candidate.sdpMLineIndex,
+        };
 
         if (this.offerId) {
           // offerId is set, send immediately (trickle ICE)
           try {
-            await this.offersApi.addIceCandidates(this.offerId, [candidateString]);
+            await this.offersApi.addIceCandidates(this.offerId, [candidateData]);
           } catch (err) {
             console.error('Error sending ICE candidate:', err);
           }
         } else {
           // offerId not set yet, buffer the candidate
-          this.pendingIceCandidates.push(candidateString);
+          this.pendingIceCandidates.push(candidateData);
         }
       }
     };
@@ -275,10 +283,11 @@ export class RondevuConnection {
         );
 
         for (const candidate of candidates) {
-          // Create ICE candidate from candidate string only
-          // Don't hardcode sdpMLineIndex/sdpMid - let WebRTC parse from candidate string
+          // Create ICE candidate with all fields
           await this.pc.addIceCandidate(new RTCIceCandidate({
-            candidate: candidate.candidate
+            candidate: candidate.candidate,
+            sdpMid: candidate.sdpMid ?? undefined,
+            sdpMLineIndex: candidate.sdpMLineIndex ?? undefined,
           }));
           this.lastIceTimestamp = candidate.createdAt;
         }
