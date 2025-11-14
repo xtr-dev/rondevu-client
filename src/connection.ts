@@ -246,11 +246,11 @@ export class RondevuConnection {
         );
 
         for (const candidate of candidates) {
-          await this.pc.addIceCandidate({
-            candidate: candidate.candidate,
-            sdpMLineIndex: 0,
-            sdpMid: '0'
-          });
+          // Create ICE candidate from candidate string only
+          // Don't hardcode sdpMLineIndex/sdpMid - let WebRTC parse from candidate string
+          await this.pc.addIceCandidate(new RTCIceCandidate({
+            candidate: candidate.candidate
+          }));
           this.lastIceTimestamp = candidate.createdAt;
         }
       } catch (err) {
