@@ -60,6 +60,7 @@ export class RondevuConnection {
   private lastIceTimestamp: number = Date.now();
   private eventListeners: Map<keyof RondevuConnectionEvents, Set<Function>> = new Map();
   private dataChannel?: RTCDataChannel;
+  private pendingIceCandidates: string[] = [];
 
   /**
    * Current connection state
@@ -101,11 +102,19 @@ export class RondevuConnection {
    */
   private setupPeerConnection(): void {
     this.pc.onicecandidate = async (event) => {
-      if (event.candidate && this.offerId) {
-        try {
-          await this.offersApi.addIceCandidates(this.offerId, [event.candidate.candidate]);
-        } catch (err) {
-          console.error('Error sending ICE candidate:', err);
+      if (event.candidate) {
+        const candidateString = event.candidate.candidate;
+
+        if (this.offerId) {
+          // offerId is set, send immediately (trickle ICE)
+          try {
+            await this.offersApi.addIceCandidates(this.offerId, [candidateString]);
+          } catch (err) {
+            console.error('Error sending ICE candidate:', err);
+          }
+        } else {
+          // offerId not set yet, buffer the candidate
+          this.pendingIceCandidates.push(candidateString);
         }
       }
     };
@@ -142,6 +151,20 @@ export class RondevuConnection {
   }
 
   /**
+   * Flush buffered ICE candidates (trickle ICE support)
+   */
+  private async flushPendingIceCandidates(): Promise<void> {
+    if (this.pendingIceCandidates.length > 0 && this.offerId) {
+      try {
+        await this.offersApi.addIceCandidates(this.offerId, this.pendingIceCandidates);
+        this.pendingIceCandidates = [];
+      } catch (err) {
+        console.error('Error flushing pending ICE candidates:', err);
+      }
+    }
+  }
+
+  /**
    * Create an offer and advertise on topics
    */
   async createOffer(options: ConnectionOptions): Promise<string> {
@@ -167,6 +190,9 @@ export class RondevuConnection {
     }]);
 
     this.offerId = offers[0].id;
+
+    // Flush any ICE candidates that were generated during offer creation
+    await this.flushPendingIceCandidates();
 
     // Start polling for answers
     this.startAnswerPolling();
@@ -197,6 +223,9 @@ export class RondevuConnection {
     // Now set offerId to enable ICE candidate sending
     // This prevents a race condition where ICE candidates arrive before answer is registered
     this.offerId = offerId;
+
+    // Flush any ICE candidates that were generated during answer creation
+    await this.flushPendingIceCandidates();
 
     // Start polling for ICE candidates
     this.startIcePolling();
