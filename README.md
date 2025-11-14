@@ -34,7 +34,7 @@ npm install @xtr-dev/rondevu-client
 ```typescript
 import { Rondevu, BloomFilter } from '@xtr-dev/rondevu-client';
 
-const client = new Rondevu({ baseUrl: 'https://rondevu.xtrdev.workers.dev' });
+const client = new Rondevu({ baseUrl: 'https://api.ronde.vu' });
 
 // 1. Register and get credentials
 const creds = await client.register();
@@ -148,7 +148,7 @@ For most use cases, you should use the high-level `RondevuConnection` class inst
 ```typescript
 import { Rondevu } from '@xtr-dev/rondevu-client';
 
-const client = new Rondevu({ baseUrl: 'https://rondevu.xtrdev.workers.dev' });
+const client = new Rondevu({ baseUrl: 'https://api.ronde.vu' });
 await client.register();
 
 // Create a connection
@@ -184,7 +184,7 @@ console.log('Share these topics with peers:', ['my-app', 'room-123']);
 ```typescript
 import { Rondevu } from '@xtr-dev/rondevu-client';
 
-const client = new Rondevu({ baseUrl: 'https://rondevu.xtrdev.workers.dev' });
+const client = new Rondevu({ baseUrl: 'https://api.ronde.vu' });
 await client.register();
 
 // Discover offers by topic
