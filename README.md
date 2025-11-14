@@ -29,119 +29,7 @@ npm install @xtr-dev/rondevu-client
 
 ## Quick Start
 
-### Browser (Modern with native fetch)
-
-```typescript
-import { Rondevu, BloomFilter } from '@xtr-dev/rondevu-client';
-
-const client = new Rondevu({ baseUrl: 'https://api.ronde.vu' });
-
-// 1. Register and get credentials
-const creds = await client.register();
-console.log('Peer ID:', creds.peerId);
-
-// Save credentials for later use
-localStorage.setItem('rondevu-creds', JSON.stringify(creds));
-
-// 2. Create offer with topics
-const offers = await client.offers.create([{
-  sdp: 'v=0...',  // Your WebRTC offer SDP
-  topics: ['movie-xyz', 'hd-content'],
-  ttl: 300000  // 5 minutes
-}]);
-
-// 3. Discover peers by topic
-const discovered = await client.offers.findByTopic('movie-xyz', {
-  limit: 50
-});
-
-console.log(`Found ${discovered.length} peers`);
-
-// 4. Use bloom filter to exclude known peers
-const knownPeers = new Set(['peer-id-1', 'peer-id-2']);
-const bloom = new BloomFilter(1024, 3);
-knownPeers.forEach(id => bloom.add(id));
-
-const newPeers = await client.offers.findByTopic('movie-xyz', {
-  bloomFilter: bloom.toBytes(),
-  limit: 50
-});
-```
-
-### Node.js (< 18 without native fetch)
-
-```typescript
-import { Rondevu } from '@xtr-dev/rondevu-client';
-import fetch from 'node-fetch';
-
-const client = new Rondevu({
-  baseUrl: 'https://rondevu.xtrdev.workers.dev',
-  fetch: fetch as any
-});
-
-const creds = await client.register();
-console.log('Registered:', creds.peerId);
-```
-
-### Node.js 18+ (with native fetch)
-
-```typescript
-import { Rondevu } from '@xtr-dev/rondevu-client';
-
-// No need to provide fetch, it's available globally
-const client = new Rondevu({
-  baseUrl: 'https://rondevu.xtrdev.workers.dev'
-});
-
-const creds = await client.register();
-```
-
-### Deno
-
-```typescript
-import { Rondevu } from 'npm:@xtr-dev/rondevu-client';
-
-// Deno has native fetch, no polyfill needed
-const client = new Rondevu({
-  baseUrl: 'https://rondevu.xtrdev.workers.dev'
-});
-
-const creds = await client.register();
-```
-
-### Bun
-
-```typescript
-import { Rondevu } from '@xtr-dev/rondevu-client';
-
-// Bun has native fetch, no polyfill needed
-const client = new Rondevu({
-  baseUrl: 'https://rondevu.xtrdev.workers.dev'
-});
-
-const creds = await client.register();
-```
-
-### Cloudflare Workers
-
-```typescript
-import { Rondevu } from '@xtr-dev/rondevu-client';
-
-export default {
-  async fetch(request: Request, env: Env) {
-    const client = new Rondevu({
-      baseUrl: 'https://rondevu.xtrdev.workers.dev'
-    });
-
-    const creds = await client.register();
-    return new Response(JSON.stringify(creds));
-  }
-};
-```
-
-## WebRTC Connection Manager
-
-For most use cases, you should use the high-level `RondevuConnection` class instead of manually managing WebRTC connections. It handles all the complexity of offer/answer exchange, ICE candidates, and connection lifecycle.
+The easiest way to use Rondevu is with the high-level `RondevuConnection` class, which handles all WebRTC connection complexity including offer/answer exchange, ICE candidates, and connection lifecycle.
 
 ### Creating an Offer (Peer A)
 
@@ -283,6 +171,102 @@ console.log(conn.channel);
 
 ```typescript
 conn.close();
+```
+
+## Platform-Specific Setup
+
+### Node.js 18+ (with native fetch)
+
+Works out of the box - no additional setup needed.
+
+### Node.js < 18 (without native fetch)
+
+Install node-fetch and provide it to the client:
+
+```bash
+npm install node-fetch
+```
+
+```typescript
+import { Rondevu } from '@xtr-dev/rondevu-client';
+import fetch from 'node-fetch';
+
+const client = new Rondevu({
+  baseUrl: 'https://api.ronde.vu',
+  fetch: fetch as any
+});
+```
+
+### Deno
+
+```typescript
+import { Rondevu } from 'npm:@xtr-dev/rondevu-client';
+
+const client = new Rondevu({
+  baseUrl: 'https://api.ronde.vu'
+});
+```
+
+### Bun
+
+Works out of the box - no additional setup needed.
+
+### Cloudflare Workers
+
+```typescript
+import { Rondevu } from '@xtr-dev/rondevu-client';
+
+export default {
+  async fetch(request: Request, env: Env) {
+    const client = new Rondevu({
+      baseUrl: 'https://api.ronde.vu'
+    });
+
+    const creds = await client.register();
+    return new Response(JSON.stringify(creds));
+  }
+};
+```
+
+## Low-Level API Usage
+
+For advanced use cases where you need direct control over the signaling process, you can use the low-level API:
+
+```typescript
+import { Rondevu, BloomFilter } from '@xtr-dev/rondevu-client';
+
+const client = new Rondevu({ baseUrl: 'https://api.ronde.vu' });
+
+// Register and get credentials
+const creds = await client.register();
+console.log('Peer ID:', creds.peerId);
+
+// Save credentials for later use
+localStorage.setItem('rondevu-creds', JSON.stringify(creds));
+
+// Create offer with topics
+const offers = await client.offers.create([{
+  sdp: 'v=0...',  // Your WebRTC offer SDP
+  topics: ['movie-xyz', 'hd-content'],
+  ttl: 300000  // 5 minutes
+}]);
+
+// Discover peers by topic
+const discovered = await client.offers.findByTopic('movie-xyz', {
+  limit: 50
+});
+
+console.log(`Found ${discovered.length} peers`);
+
+// Use bloom filter to exclude known peers
+const knownPeers = new Set(['peer-id-1', 'peer-id-2']);
+const bloom = new BloomFilter(1024, 3);
+knownPeers.forEach(id => bloom.add(id));
+
+const newPeers = await client.offers.findByTopic('movie-xyz', {
+  bloomFilter: bloom.toBytes(),
+  limit: 50
+});
 ```
 
 ## API Reference
