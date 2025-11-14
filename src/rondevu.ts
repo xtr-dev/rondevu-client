@@ -1,255 +1,103 @@
-import { RondevuAPI } from './client.js';
-import { RondevuConnection } from './connection.js';
-import { RondevuOptions, RondevuConnectionParams, WebRTCPolyfill } from './types.js';
+import { RondevuAuth, Credentials, FetchFunction } from './auth.js';
+import { RondevuOffers } from './offers.js';
+import { RondevuConnection, ConnectionOptions } from './connection.js';
 
-/**
- * Main Rondevu WebRTC client with automatic connection management
- */
-export class Rondevu {
-  readonly peerId: string;
-  readonly api: RondevuAPI;
-
-  private baseUrl: string;
-  private fetchImpl?: typeof fetch;
-  private rtcConfig?: RTCConfiguration;
-  private pollingInterval: number;
-  private connectionTimeout: number;
-  private wrtc?: WebRTCPolyfill;
-  private RTCPeerConnection: typeof RTCPeerConnection;
-  private RTCIceCandidate: typeof RTCIceCandidate;
+export interface RondevuOptions {
+  /**
+   * Base URL of the Rondevu server
+   * @default 'https://api.ronde.vu'
+   */
+  baseUrl?: string;
 
   /**
-   * Creates a new Rondevu client instance
-   * @param options - Client configuration options
+   * Existing credentials (peerId + secret) to skip registration
    */
+  credentials?: Credentials;
+
+  /**
+   * Custom fetch implementation for environments without native fetch
+   * (Node.js < 18, some Workers environments, etc.)
+   *
+   * @example Node.js
+   * ```typescript
+   * import fetch from 'node-fetch';
+   * const client = new Rondevu({ fetch });
+   * ```
+   */
+  fetch?: FetchFunction;
+}
+
+export class Rondevu {
+  readonly auth: RondevuAuth;
+  private _offers?: RondevuOffers;
+  private credentials?: Credentials;
+  private baseUrl: string;
+  private fetchFn?: FetchFunction;
+
   constructor(options: RondevuOptions = {}) {
     this.baseUrl = options.baseUrl || 'https://api.ronde.vu';
-    this.fetchImpl = options.fetch;
-    this.wrtc = options.wrtc;
+    this.fetchFn = options.fetch;
 
-    this.api = new RondevuAPI({
-      baseUrl: this.baseUrl,
-      fetch: options.fetch,
-    });
+    this.auth = new RondevuAuth(this.baseUrl, this.fetchFn);
 
-    // Auto-generate peer ID if not provided
-    this.peerId = options.peerId || this.generatePeerId();
-    this.rtcConfig = options.rtcConfig;
-    this.pollingInterval = options.pollingInterval || 1000;
-    this.connectionTimeout = options.connectionTimeout || 30000;
-
-    // Use injected WebRTC polyfill or fall back to global
-    this.RTCPeerConnection = options.wrtc?.RTCPeerConnection || globalThis.RTCPeerConnection;
-    this.RTCIceCandidate = options.wrtc?.RTCIceCandidate || globalThis.RTCIceCandidate;
-
-    if (!this.RTCPeerConnection) {
-      throw new Error(
-        'RTCPeerConnection not available. ' +
-        'In Node.js, provide a WebRTC polyfill via the wrtc option. ' +
-        'Install: npm install @roamhq/wrtc or npm install wrtc'
-      );
-    }
-
-    // Check server version compatibility (async, don't block constructor)
-    this.checkServerVersion().catch(() => {
-      // Silently fail version check - connection will work even if version check fails
-    });
-  }
-
-  /**
-   * Check server version compatibility
-   */
-  private async checkServerVersion(): Promise<void> {
-    try {
-      const { version: serverVersion } = await this.api.health();
-      const clientVersion = '0.3.5'; // Should match package.json
-
-      if (!this.isVersionCompatible(clientVersion, serverVersion)) {
-        console.warn(
-          `[Rondevu] Version mismatch: client v${clientVersion}, server v${serverVersion}. ` +
-          'This may cause compatibility issues.'
-        );
-      }
-    } catch (error) {
-      // Version check failed - server might not support /health endpoint
-      console.debug('[Rondevu] Could not check server version');
+    if (options.credentials) {
+      this.credentials = options.credentials;
+      this._offers = new RondevuOffers(this.baseUrl, this.credentials, this.fetchFn);
     }
   }
 
   /**
-   * Check if client and server versions are compatible
-   * For now, just check major version compatibility
+   * Get offers API (requires authentication)
    */
-  private isVersionCompatible(clientVersion: string, serverVersion: string): boolean {
-    const clientMajor = parseInt(clientVersion.split('.')[0]);
-    const serverMajor = parseInt(serverVersion.split('.')[0]);
-
-    // Major versions must match
-    return clientMajor === serverMajor;
+  get offers(): RondevuOffers {
+    if (!this._offers) {
+      throw new Error('Not authenticated. Call register() first or provide credentials.');
+    }
+    return this._offers;
   }
 
   /**
-   * Generate a unique peer ID
+   * Register and initialize authenticated client
    */
-  private generatePeerId(): string {
-    return `rdv_${Math.random().toString(36).substring(2, 14)}`;
+  async register(): Promise<Credentials> {
+    this.credentials = await this.auth.register();
+
+    // Create offers API instance
+    this._offers = new RondevuOffers(
+      this.baseUrl,
+      this.credentials,
+      this.fetchFn
+    );
+
+    return this.credentials;
   }
 
   /**
-   * Update the peer ID (useful when user identity changes)
+   * Check if client is authenticated
    */
-  updatePeerId(newPeerId: string): void {
-    (this as any).peerId = newPeerId;
+  isAuthenticated(): boolean {
+    return !!this.credentials;
   }
 
   /**
-   * Create an offer (offerer role)
-   * @param id - Offer identifier (custom code)
-   * @returns Promise that resolves to RondevuConnection
+   * Get current credentials
    */
-  async offer(id: string): Promise<RondevuConnection> {
-    // Create peer connection
-    const pc = new this.RTCPeerConnection(this.rtcConfig);
-
-    // Create initial data channel for negotiation (required for offer creation)
-    pc.createDataChannel('_negotiation');
-
-    // Generate offer
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-
-    // Wait for ICE gathering to complete
-    await this.waitForIceGathering(pc);
-
-    // Create offer on server with custom code
-    await this.api.createOffer({
-      peerId: this.peerId,
-      offer: pc.localDescription!.sdp,
-      code: id,
-    });
-
-    // Create connection object
-    const connectionParams: RondevuConnectionParams = {
-      id,
-      role: 'offerer',
-      pc,
-      localPeerId: this.peerId,
-      remotePeerId: '', // Will be populated when answer is received
-      pollingInterval: this.pollingInterval,
-      connectionTimeout: this.connectionTimeout,
-      wrtc: this.wrtc,
-    };
-
-    const connection = new RondevuConnection(connectionParams, this.api);
-
-    // Start polling for answer
-    connection.startPolling();
-
-    return connection;
+  getCredentials(): Credentials | undefined {
+    return this.credentials;
   }
 
   /**
-   * Answer an existing offer by ID (answerer role)
-   * @param id - Offer code
-   * @returns Promise that resolves to RondevuConnection
+   * Create a new WebRTC connection (requires authentication)
+   * This is a high-level helper that creates and manages WebRTC connections
+   *
+   * @param rtcConfig Optional RTCConfiguration for the peer connection
+   * @returns RondevuConnection instance
    */
-  async answer(id: string): Promise<RondevuConnection> {
-    // Poll server to get offer by ID
-    const offerData = await this.findOfferById(id);
-
-    if (!offerData) {
-      throw new Error(`Offer ${id} not found or expired`);
+  createConnection(rtcConfig?: RTCConfiguration): RondevuConnection {
+    if (!this._offers) {
+      throw new Error('Not authenticated. Call register() first or provide credentials.');
     }
 
-    // Create peer connection
-    const pc = new this.RTCPeerConnection(this.rtcConfig);
-
-    // Set remote offer
-    await pc.setRemoteDescription({
-      type: 'offer',
-      sdp: offerData.offer,
-    });
-
-    // Generate answer
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-
-    // Wait for ICE gathering
-    await this.waitForIceGathering(pc);
-
-    // Send answer to server
-    await this.api.sendAnswer({
-      code: id,
-      answer: pc.localDescription!.sdp,
-      side: 'answerer',
-    });
-
-    // Create connection object
-    const connectionParams: RondevuConnectionParams = {
-      id,
-      role: 'answerer',
-      pc,
-      localPeerId: this.peerId,
-      remotePeerId: '', // Will be determined from peerId in offer
-      pollingInterval: this.pollingInterval,
-      connectionTimeout: this.connectionTimeout,
-      wrtc: this.wrtc,
-    };
-
-    const connection = new RondevuConnection(connectionParams, this.api);
-
-    // Start polling for ICE candidates
-    connection.startPolling();
-
-    return connection;
-  }
-
-  /**
-   * Wait for ICE gathering to complete
-   */
-  private async waitForIceGathering(pc: RTCPeerConnection): Promise<void> {
-    if (pc.iceGatheringState === 'complete') {
-      return;
-    }
-
-    return new Promise((resolve) => {
-      const checkState = () => {
-        if (pc.iceGatheringState === 'complete') {
-          pc.removeEventListener('icegatheringstatechange', checkState);
-          resolve();
-        }
-      };
-
-      pc.addEventListener('icegatheringstatechange', checkState);
-
-      // Also set a timeout in case gathering takes too long
-      setTimeout(() => {
-        pc.removeEventListener('icegatheringstatechange', checkState);
-        resolve();
-      }, 5000);
-    });
-  }
-
-  /**
-   * Find an offer by code
-   */
-  private async findOfferById(id: string): Promise<{
-    offer: string;
-  } | null> {
-    try {
-      // Poll for the offer directly
-      const response = await this.api.poll(id, 'answerer');
-      const answererResponse = response as { offer: string; offerCandidates: string[] };
-
-      if (answererResponse.offer) {
-        return {
-          offer: answererResponse.offer,
-        };
-      }
-
-      return null;
-    } catch (err) {
-      throw new Error(`Failed to find offer ${id}: ${(err as Error).message}`);
-    }
+    return new RondevuConnection(this._offers, rtcConfig);
   }
 }
