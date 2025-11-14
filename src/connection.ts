@@ -132,6 +132,8 @@ export class RondevuConnection {
           break;
         case 'connected':
           this.emit('connected');
+          // Stop polling once connected - we have all the ICE candidates we need
+          this.stopPolling();
           break;
         case 'disconnected':
         case 'failed':
@@ -261,6 +263,10 @@ export class RondevuConnection {
         }
       } catch (err) {
         console.error('Error polling for answers:', err);
+        // Stop polling if offer expired/not found
+        if (err instanceof Error && err.message.includes('not found')) {
+          this.stopPolling();
+        }
       }
     }, 2000);
   }
@@ -287,6 +293,10 @@ export class RondevuConnection {
         }
       } catch (err) {
         console.error('Error polling for ICE candidates:', err);
+        // Stop polling if offer expired/not found
+        if (err instanceof Error && err.message.includes('not found')) {
+          this.stopPolling();
+        }
       }
     }, 1000);
   }
