@@ -4,10 +4,10 @@
 
 🌐 **Topic-based peer discovery and WebRTC signaling client**
 
-TypeScript/JavaScript client for Rondevu, providing topic-based peer discovery, stateless authentication, and complete WebRTC signaling.
+TypeScript/JavaScript client for Rondevu, providing topic-based peer discovery, stateless authentication, and complete WebRTC signaling with trickle ICE support.
 
 **Related repositories:**
-- [rondevu-server](https://github.com/xtr-dev/rondevu) - HTTP signaling server
+- [rondevu-server](https://github.com/xtr-dev/rondevu-server) - HTTP signaling server
 - [rondevu-demo](https://rondevu-demo.pages.dev) - Interactive demo
 
 ---
@@ -19,6 +19,8 @@ TypeScript/JavaScript client for Rondevu, providing topic-based peer discovery, 
 - **Bloom Filters**: Efficient peer exclusion for repeated discoveries
 - **Multi-Offer Management**: Create and manage multiple offers per peer
 - **Complete WebRTC Signaling**: Full offer/answer and ICE candidate exchange
+- **Trickle ICE**: Send ICE candidates as they're discovered (faster connections)
+- **State Machine**: Clean state-based connection lifecycle
 - **TypeScript**: Full type safety and autocomplete
 
 ## Install
@@ -29,36 +31,42 @@ npm install @xtr-dev/rondevu-client
 
 ## Quick Start
 
-The easiest way to use Rondevu is with the high-level `RondevuConnection` class, which handles all WebRTC connection complexity including offer/answer exchange, ICE candidates, and connection lifecycle.
-
 ### Creating an Offer (Peer A)
 
 ```typescript
-import { Rondevu } from '@xtr-dev/rondevu-client';
+import { Rondevu, RondevuPeer } from '@xtr-dev/rondevu-client';
 
+// Initialize client and register
 const client = new Rondevu({ baseUrl: 'https://api.ronde.vu' });
 await client.register();
 
-// Create a connection
-const conn = client.createConnection();
+// Create peer connection
+const peer = new RondevuPeer(client.offers);
 
 // Set up event listeners
-conn.on('connected', () => {
-  console.log('Connected to peer!');
+peer.on('state', (state) => {
+  console.log('Peer state:', state);
+  // States: idle → creating-offer → waiting-for-answer → exchanging-ice → connected
 });
 
-conn.on('datachannel', (channel) => {
-  console.log('Data channel ready');
+peer.on('connected', () => {
+  console.log('✅ Connected to peer!');
+});
 
-  channel.onmessage = (event) => {
-    console.log('Received:', event.data);
-  };
+peer.on('datachannel', (channel) => {
+  console.log('📡 Data channel ready');
 
-  channel.send('Hello from peer A!');
+  channel.addEventListener('message', (event) => {
+    console.log('📥 Received:', event.data);
+  });
+
+  channel.addEventListener('open', () => {
+    channel.send('Hello from peer A!');
+  });
 });
 
 // Create offer and advertise on topics
-const offerId = await conn.createOffer({
+const offerId = await peer.createOffer({
   topics: ['my-app', 'room-123'],
   ttl: 300000  // 5 minutes
 });
@@ -70,8 +78,9 @@ console.log('Share these topics with peers:', ['my-app', 'room-123']);
 ### Answering an Offer (Peer B)
 
 ```typescript
-import { Rondevu } from '@xtr-dev/rondevu-client';
+import { Rondevu, RondevuPeer } from '@xtr-dev/rondevu-client';
 
+// Initialize client and register
 const client = new Rondevu({ baseUrl: 'https://api.ronde.vu' });
 await client.register();
 
@@ -81,65 +90,109 @@ const offers = await client.offers.findByTopic('my-app', { limit: 10 });
 if (offers.length > 0) {
   const offer = offers[0];
 
-  // Create connection
-  const conn = client.createConnection();
+  // Create peer connection
+  const peer = new RondevuPeer(client.offers);
 
   // Set up event listeners
-  conn.on('connecting', () => {
-    console.log('Connecting...');
+  peer.on('state', (state) => {
+    console.log('Peer state:', state);
+    // States: idle → answering → exchanging-ice → connected
   });
 
-  conn.on('connected', () => {
-    console.log('Connected!');
+  peer.on('connected', () => {
+    console.log('✅ Connected!');
   });
 
-  conn.on('datachannel', (channel) => {
-    console.log('Data channel ready');
+  peer.on('datachannel', (channel) => {
+    console.log('📡 Data channel ready');
 
-    channel.onmessage = (event) => {
-      console.log('Received:', event.data);
-    };
+    channel.addEventListener('message', (event) => {
+      console.log('📥 Received:', event.data);
+    });
 
-    channel.send('Hello from peer B!');
+    channel.addEventListener('open', () => {
+      channel.send('Hello from peer B!');
+    });
+  });
+
+  peer.on('failed', (error) => {
+    console.error('❌ Connection failed:', error);
   });
 
   // Answer the offer
-  await conn.answer(offer.id, offer.sdp);
+  await peer.answer(offer.id, offer.sdp, {
+    topics: offer.topics,
+    rtcConfig: {
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' }
+      ]
+    }
+  });
 }
 ```
 
-### Connection Events
+## Connection Lifecycle
+
+The `RondevuPeer` uses a state machine for connection management:
+
+### Offerer States
+1. **idle** - Initial state
+2. **creating-offer** - Creating WebRTC offer
+3. **waiting-for-answer** - Polling for answer from peer
+4. **exchanging-ice** - Exchanging ICE candidates
+5. **connected** - Successfully connected
+6. **failed** - Connection failed
+7. **closed** - Connection closed
+
+### Answerer States
+1. **idle** - Initial state
+2. **answering** - Creating WebRTC answer
+3. **exchanging-ice** - Exchanging ICE candidates
+4. **connected** - Successfully connected
+5. **failed** - Connection failed
+6. **closed** - Connection closed
+
+### State Events
 
 ```typescript
-conn.on('connecting', () => {
-  // Connection is being established
+peer.on('state', (stateName) => {
+  console.log('Current state:', stateName);
 });
 
-conn.on('connected', () => {
+peer.on('connected', () => {
   // Connection established successfully
 });
 
-conn.on('disconnected', () => {
+peer.on('disconnected', () => {
   // Connection lost or closed
 });
 
-conn.on('error', (error) => {
-  // An error occurred
+peer.on('failed', (error) => {
+  // Connection failed
   console.error('Connection error:', error);
 });
 
-conn.on('datachannel', (channel) => {
-  // Data channel is ready to use
+peer.on('datachannel', (channel) => {
+  // Data channel is ready (use channel.addEventListener)
 });
 
-conn.on('track', (event) => {
+peer.on('track', (event) => {
   // Media track received (for audio/video streaming)
   const stream = event.streams[0];
   videoElement.srcObject = stream;
 });
 ```
 
-### Adding Media Tracks
+## Trickle ICE
+
+This library implements **trickle ICE** for faster connection establishment:
+
+- ICE candidates are sent to the server as they're discovered
+- No waiting for all candidates before sending offer/answer
+- Connections establish much faster (milliseconds vs seconds)
+- Proper event listener cleanup to prevent memory leaks
+
+## Adding Media Tracks
 
 ```typescript
 // Get user's camera/microphone
@@ -148,29 +201,64 @@ const stream = await navigator.mediaDevices.getUserMedia({
   audio: true
 });
 
-// Add tracks to connection
+// Add tracks to peer connection
 stream.getTracks().forEach(track => {
-  conn.addTrack(track, stream);
+  peer.addTrack(track, stream);
 });
 ```
 
-### Connection Properties
+## Peer Properties
 
 ```typescript
+// Get current state name
+console.log(peer.stateName); // 'idle', 'creating-offer', 'connected', etc.
+
 // Get connection state
-console.log(conn.connectionState); // 'connecting', 'connected', 'disconnected', etc.
+console.log(peer.connectionState); // RTCPeerConnectionState
 
-// Get offer ID
-console.log(conn.id);
+// Get offer ID (after creating offer or answering)
+console.log(peer.offerId);
 
-// Get data channel
-console.log(conn.channel);
+// Get role
+console.log(peer.role); // 'offerer' or 'answerer'
 ```
 
-### Closing a Connection
+## Closing a Connection
 
 ```typescript
-conn.close();
+await peer.close();
+```
+
+## Custom RTCConfiguration
+
+```typescript
+const peer = new RondevuPeer(client.offers, {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    {
+      urls: 'turn:turn.example.com:3478',
+      username: 'user',
+      credential: 'pass'
+    }
+  ],
+  iceTransportPolicy: 'relay' // Force TURN relay (useful for testing)
+});
+```
+
+## Timeouts
+
+Configure connection timeouts:
+
+```typescript
+await peer.createOffer({
+  topics: ['my-topic'],
+  timeouts: {
+    iceGathering: 10000,        // ICE gathering timeout (10s)
+    waitingForAnswer: 30000,    // Waiting for answer timeout (30s)
+    creatingAnswer: 10000,      // Creating answer timeout (10s)
+    iceConnection: 30000        // ICE connection timeout (30s)
+  }
+});
 ```
 
 ## Platform-Specific Setup
@@ -230,7 +318,7 @@ export default {
 
 ## Low-Level API Usage
 
-For advanced use cases where you need direct control over the signaling process, you can use the low-level API:
+For direct control over the signaling process without WebRTC:
 
 ```typescript
 import { Rondevu, BloomFilter } from '@xtr-dev/rondevu-client';
@@ -370,7 +458,7 @@ Post ICE candidates for an offer.
 
 ```typescript
 await client.offers.addIceCandidates(offerId, [
-  'candidate:1 1 UDP...'
+  { candidate: 'candidate:1 1 UDP...', sdpMid: '0', sdpMLineIndex: 0 }
 ]);
 ```
 
@@ -378,7 +466,7 @@ await client.offers.addIceCandidates(offerId, [
 Get ICE candidates from the other peer.
 
 ```typescript
-const candidates = await client.offers.getIceCandidates(offerId);
+const candidates = await client.offers.getIceCandidates(offerId, since);
 ```
 
 ### Bloom Filter
@@ -414,8 +502,9 @@ import type {
   IceCandidate,
   FetchFunction,
   RondevuOptions,
-  ConnectionOptions,
-  RondevuConnectionEvents
+  PeerOptions,
+  PeerEvents,
+  PeerTimeouts
 } from '@xtr-dev/rondevu-client';
 ```
 
