@@ -34,14 +34,14 @@ npm install @xtr-dev/rondevu-client
 ### Creating an Offer (Peer A)
 
 ```typescript
-import { Rondevu, RondevuPeer } from '@xtr-dev/rondevu-client';
+import { Rondevu } from '@xtr-dev/rondevu-client';
 
 // Initialize client and register
 const client = new Rondevu({ baseUrl: 'https://api.ronde.vu' });
 await client.register();
 
 // Create peer connection
-const peer = new RondevuPeer(client.offers);
+const peer = client.createPeer();
 
 // Set up event listeners
 peer.on('state', (state) => {
@@ -78,7 +78,7 @@ console.log('Share these topics with peers:', ['my-app', 'room-123']);
 ### Answering an Offer (Peer B)
 
 ```typescript
-import { Rondevu, RondevuPeer } from '@xtr-dev/rondevu-client';
+import { Rondevu } from '@xtr-dev/rondevu-client';
 
 // Initialize client and register
 const client = new Rondevu({ baseUrl: 'https://api.ronde.vu' });
@@ -91,7 +91,7 @@ if (offers.length > 0) {
   const offer = offers[0];
 
   // Create peer connection
-  const peer = new RondevuPeer(client.offers);
+  const peer = client.createPeer();
 
   // Set up event listeners
   peer.on('state', (state) => {
@@ -121,12 +121,7 @@ if (offers.length > 0) {
 
   // Answer the offer
   await peer.answer(offer.id, offer.sdp, {
-    topics: offer.topics,
-    rtcConfig: {
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' }
-      ]
-    }
+    topics: offer.topics
   });
 }
 ```
@@ -232,7 +227,7 @@ await peer.close();
 ## Custom RTCConfiguration
 
 ```typescript
-const peer = new RondevuPeer(client.offers, {
+const peer = client.createPeer({
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     {
