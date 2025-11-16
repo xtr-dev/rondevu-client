@@ -24,9 +24,13 @@ export class CreatingOfferState extends PeerState {
         this.peer.emitEvent('datachannel', channel);
       }
 
+      // Enable trickle ICE - set up handler before ICE gathering starts
+      // Handler will check this.peer.offerId before sending
+      this.setupIceCandidateHandler();
+
       // Create WebRTC offer
       const offer = await this.peer.pc.createOffer();
-      await this.peer.pc.setLocalDescription(offer);
+      await this.peer.pc.setLocalDescription(offer); // ICE gathering starts here
 
       // Send offer to server immediately (don't wait for ICE)
       const offers = await this.peer.offersApi.create([{
@@ -36,10 +40,7 @@ export class CreatingOfferState extends PeerState {
       }]);
 
       const offerId = offers[0].id;
-      this.peer.offerId = offerId;
-
-      // Enable trickle ICE - send candidates as they arrive
-      this.setupIceCandidateHandler(offerId);
+      this.peer.offerId = offerId; // Now handler can send candidates
 
       // Transition to waiting for answer
       const { WaitingForAnswerState } = await import('./waiting-for-answer-state.js');

@@ -35,13 +35,13 @@ export abstract class PeerState {
    * Setup trickle ICE candidate handler
    * Sends local ICE candidates to server as they are discovered
    */
-  protected setupIceCandidateHandler(offerId: string): void {
+  protected setupIceCandidateHandler(): void {
     this.iceCandidateHandler = async (event: RTCPeerConnectionIceEvent) => {
-      if (event.candidate && offerId) {
+      if (event.candidate && this.peer.offerId) {
         const candidateData = event.candidate.toJSON();
         if (candidateData.candidate && candidateData.candidate !== '') {
           try {
-            await this.peer.offersApi.addIceCandidates(offerId, [candidateData]);
+            await this.peer.offersApi.addIceCandidates(this.peer.offerId, [candidateData]);
           } catch (err) {
             console.error('Error sending ICE candidate:', err);
           }
