@@ -23,15 +23,19 @@ export class AnsweringState extends PeerState {
         sdp: offerSdp
       });
 
+      // Create answer
+      const answer = await this.peer.pc.createAnswer();
+
+      // Send answer to server BEFORE setLocalDescription
+      // This registers us as the answerer so ICE candidates will be accepted
+      await this.peer.offersApi.answer(offerId, answer.sdp!);
+
       // Enable trickle ICE - set up handler before ICE gathering starts
       this.setupIceCandidateHandler();
 
-      // Create answer
-      const answer = await this.peer.pc.createAnswer();
-      await this.peer.pc.setLocalDescription(answer); // ICE gathering starts here
-
-      // Send answer to server immediately (don't wait for ICE)
-      await this.peer.offersApi.answer(offerId, answer.sdp!);
+      // Set local description - ICE gathering starts here
+      // Server already knows we're the answerer, so candidates will be accepted
+      await this.peer.pc.setLocalDescription(answer);
 
       // Transition to exchanging ICE
       const { ExchangingIceState } = await import('./exchanging-ice-state.js');
