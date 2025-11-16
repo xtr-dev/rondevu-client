@@ -5,7 +5,6 @@ import { RondevuAuth } from './auth.js';
 declare const Buffer: any;
 
 export interface CreateOfferRequest {
-  id?: string;
   sdp: string;
   topics: string[];
   ttl?: number;
@@ -24,18 +23,8 @@ export interface Offer {
   answeredAt?: number;
 }
 
-/**
- * RTCIceCandidateInit interface for environments without native WebRTC types
- */
-export interface RTCIceCandidateInit {
-  candidate?: string;
-  sdpMid?: string | null;
-  sdpMLineIndex?: number | null;
-  usernameFragment?: string | null;
-}
-
 export interface IceCandidate {
-  candidate: RTCIceCandidateInit; // Full candidate object
+  candidate: any; // Full candidate object as plain JSON - don't enforce structure
   peerId: string;
   role: 'offerer' | 'answerer';
   createdAt: number;
@@ -290,7 +279,7 @@ export class RondevuOffers {
    */
   async addIceCandidates(
     offerId: string,
-    candidates: RTCIceCandidateInit[]
+    candidates: any[]
   ): Promise<void> {
     const response = await this.fetchFn(`${this.baseUrl}/offers/${encodeURIComponent(offerId)}/ice-candidates`, {
       method: 'POST',

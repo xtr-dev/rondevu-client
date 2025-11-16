@@ -1,6 +1,6 @@
 import { RondevuAuth, Credentials, FetchFunction } from './auth.js';
 import { RondevuOffers } from './offers.js';
-import { RondevuConnection, ConnectionOptions } from './connection.js';
+import RondevuPeer from './peer.js';
 
 export interface RondevuOptions {
   /**
@@ -87,17 +87,17 @@ export class Rondevu {
   }
 
   /**
-   * Create a new WebRTC connection (requires authentication)
-   * This is a high-level helper that creates and manages WebRTC connections
+   * Create a new WebRTC peer connection (requires authentication)
+   * This is a high-level helper that creates and manages WebRTC connections with state management
    *
    * @param rtcConfig Optional RTCConfiguration for the peer connection
-   * @returns RondevuConnection instance
+   * @returns RondevuPeer instance
    */
-  createConnection(rtcConfig?: RTCConfiguration): RondevuConnection {
+  createPeer(rtcConfig?: RTCConfiguration): RondevuPeer {
     if (!this._offers) {
       throw new Error('Not authenticated. Call register() first or provide credentials.');
     }
 
-    return new RondevuConnection(this._offers, rtcConfig);
+    return new RondevuPeer(this._offers, rtcConfig);
   }
 }

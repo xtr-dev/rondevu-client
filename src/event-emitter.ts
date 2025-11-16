@@ -1,17 +1,37 @@
 /**
- * Simple EventEmitter implementation for browser and Node.js compatibility
+ * Type-safe EventEmitter implementation for browser and Node.js compatibility
+ *
+ * @template EventMap - A type mapping event names to their handler signatures
+ *
+ * @example
+ * ```typescript
+ * interface MyEvents {
+ *   'data': (value: string) => void;
+ *   'error': (error: Error) => void;
+ *   'ready': () => void;
+ * }
+ *
+ * class MyClass extends EventEmitter<MyEvents> {
+ *   doSomething() {
+ *     this.emit('data', 'hello'); // Type-safe!
+ *     this.emit('error', new Error('oops')); // Type-safe!
+ *     this.emit('ready'); // Type-safe!
+ *   }
+ * }
+ *
+ * const instance = new MyClass();
+ * instance.on('data', (value) => {
+ *   console.log(value.toUpperCase()); // 'value' is typed as string
+ * });
+ * ```
  */
-export class EventEmitter {
-  private events: Map<string, Set<Function>>;
-
-  constructor() {
-    this.events = new Map();
-  }
+export class EventEmitter<EventMap extends Record<string, (...args: any[]) => void>> {
+  private events: Map<keyof EventMap, Set<Function>> = new Map();
 
   /**
    * Register an event listener
    */
-  on(event: string, listener: Function): this {
+  on<K extends keyof EventMap>(event: K, listener: EventMap[K]): this {
     if (!this.events.has(event)) {
       this.events.set(event, new Set());
     }
@@ -22,18 +42,18 @@ export class EventEmitter {
   /**
    * Register a one-time event listener
    */
-  once(event: string, listener: Function): this {
-    const onceWrapper = (...args: any[]) => {
-      this.off(event, onceWrapper);
-      listener.apply(this, args);
+  once<K extends keyof EventMap>(event: K, listener: EventMap[K]): this {
+    const onceWrapper = (...args: Parameters<EventMap[K]>) => {
+      this.off(event, onceWrapper as EventMap[K]);
+      listener(...args);
     };
-    return this.on(event, onceWrapper);
+    return this.on(event, onceWrapper as EventMap[K]);
   }
 
   /**
    * Remove an event listener
    */
-  off(event: string, listener: Function): this {
+  off<K extends keyof EventMap>(event: K, listener: EventMap[K]): this {
     const listeners = this.events.get(event);
     if (listeners) {
       listeners.delete(listener);
@@ -47,7 +67,10 @@ export class EventEmitter {
   /**
    * Emit an event
    */
-  emit(event: string, ...args: any[]): boolean {
+  protected emit<K extends keyof EventMap>(
+    event: K,
+    ...args: Parameters<EventMap[K]>
+  ): boolean {
     const listeners = this.events.get(event);
     if (!listeners || listeners.size === 0) {
       return false;
@@ -55,9 +78,9 @@ export class EventEmitter {
 
     listeners.forEach(listener => {
       try {
-        listener.apply(this, args);
+        (listener as EventMap[K])(...args);
       } catch (err) {
-        console.error(`Error in ${event} event listener:`, err);
+        console.error(`Error in ${String(event)} event listener:`, err);
       }
     });
 
@@ -67,8 +90,8 @@ export class EventEmitter {
   /**
    * Remove all listeners for an event (or all events if not specified)
    */
-  removeAllListeners(event?: string): this {
-    if (event) {
+  removeAllListeners<K extends keyof EventMap>(event?: K): this {
+    if (event !== undefined) {
       this.events.delete(event);
     } else {
       this.events.clear();
@@ -79,7 +102,7 @@ export class EventEmitter {
   /**
    * Get listener count for an event
    */
-  listenerCount(event: string): number {
+  listenerCount<K extends keyof EventMap>(event: K): number {
     const listeners = this.events.get(event);
     return listeners ? listeners.size : 0;
   }
