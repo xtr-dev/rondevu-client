@@ -16,6 +16,7 @@ TypeScript/JavaScript client for Rondevu, providing topic-based peer discovery, 
 
 - **Topic-Based Discovery**: Find peers by topics (e.g., torrent infohashes)
 - **Stateless Authentication**: No server-side sessions, portable credentials
+- **Protected Connections**: Optional secret-protected offers for access control
 - **Bloom Filters**: Efficient peer exclusion for repeated discoveries
 - **Multi-Offer Management**: Create and manage multiple offers per peer
 - **Complete WebRTC Signaling**: Full offer/answer and ICE candidate exchange
@@ -68,7 +69,8 @@ peer.on('datachannel', (channel) => {
 // Create offer and advertise on topics
 const offerId = await peer.createOffer({
   topics: ['my-app', 'room-123'],
-  ttl: 300000  // 5 minutes
+  ttl: 300000,  // 5 minutes
+  secret: 'my-secret-password'  // Optional: protect offer (max 128 chars)
 });
 
 console.log('Offer created:', offerId);
@@ -121,10 +123,49 @@ if (offers.length > 0) {
 
   // Answer the offer
   await peer.answer(offer.id, offer.sdp, {
-    topics: offer.topics
+    topics: offer.topics,
+    secret: 'my-secret-password'  // Required if offer.hasSecret is true
   });
 }
 ```
+
+## Protected Offers
+
+You can protect offers with a secret to control who can answer them. This is useful for private rooms or invite-only connections.
+
+### Creating a Protected Offer
+
+```typescript
+const offerId = await peer.createOffer({
+  topics: ['private-room'],
+  secret: 'my-secret-password'  // Max 128 characters
+});
+
+// Share the secret with authorized peers through a secure channel
+```
+
+### Answering a Protected Offer
+
+```typescript
+const offers = await client.offers.findByTopic('private-room');
+
+// Check if offer requires a secret
+if (offers[0].hasSecret) {
+  console.log('This offer requires a secret');
+}
+
+// Provide the secret when answering
+await peer.answer(offers[0].id, offers[0].sdp, {
+  topics: offers[0].topics,
+  secret: 'my-secret-password'  // Must match the offer's secret
+});
+```
+
+**Notes:**
+- The actual secret is never exposed in public API responses - only a `hasSecret` boolean flag
+- Answerers must provide the correct secret, or the answer will be rejected
+- Secrets are limited to 128 characters
+- Use this for access control, not for cryptographic security (use end-to-end encryption for that)
 
 ## Connection Lifecycle
 
@@ -368,7 +409,8 @@ localStorage.setItem('rondevu-creds', JSON.stringify(creds));
 const offers = await client.offers.create([{
   sdp: 'v=0...',  // Your WebRTC offer SDP
   topics: ['movie-xyz', 'hd-content'],
-  ttl: 300000  // 5 minutes
+  ttl: 300000,  // 5 minutes
+  secret: 'my-secret-password'  // Optional: protect offer (max 128 chars)
 }]);
 
 // Discover peers by topic
@@ -433,7 +475,8 @@ const offers = await client.offers.create([
   {
     sdp: 'v=0...',
     topics: ['topic-1', 'topic-2'],
-    ttl: 300000  // optional, default 5 minutes
+    ttl: 300000,  // optional, default 5 minutes
+    secret: 'my-secret-password'  // optional, max 128 chars
   }
 ]);
 ```
@@ -462,12 +505,17 @@ Delete a specific offer.
 await client.offers.delete(offerId);
 ```
 
-#### `client.offers.answer(offerId, sdp)`
+#### `client.offers.answer(offerId, sdp, secret?)`
 Answer an offer (locks it to answerer).
 
 ```typescript
-await client.offers.answer(offerId, answerSdp);
+await client.offers.answer(offerId, answerSdp, 'my-secret-password');
 ```
+
+**Parameters:**
+- `offerId`: The offer ID to answer
+- `sdp`: The WebRTC answer SDP
+- `secret` (optional): Required if the offer has `hasSecret: true`
 
 #### `client.offers.getAnswers()`
 Poll for answers to your offers.

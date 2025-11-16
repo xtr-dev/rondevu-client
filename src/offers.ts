@@ -8,6 +8,7 @@ export interface CreateOfferRequest {
   sdp: string;
   topics: string[];
   ttl?: number;
+  secret?: string;
 }
 
 export interface Offer {
@@ -18,6 +19,8 @@ export interface Offer {
   createdAt?: number;
   expiresAt: number;
   lastSeen: number;
+  secret?: string;
+  hasSecret?: boolean;
   answererPeerId?: string;
   answerSdp?: string;
   answeredAt?: number;
@@ -221,14 +224,14 @@ export class RondevuOffers {
   /**
    * Answer an offer
    */
-  async answer(offerId: string, sdp: string): Promise<void> {
+  async answer(offerId: string, sdp: string, secret?: string): Promise<void> {
     const response = await this.fetchFn(`${this.baseUrl}/offers/${encodeURIComponent(offerId)}/answer`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: RondevuAuth.createAuthHeader(this.credentials),
       },
-      body: JSON.stringify({ sdp }),
+      body: JSON.stringify({ sdp, secret }),
     });
 
     if (!response.ok) {
