@@ -196,23 +196,6 @@ export class RondevuOffers {
   }
 
   /**
-   * Update offer heartbeat
-   */
-  async heartbeat(offerId: string): Promise<void> {
-    const response = await this.fetchFn(`${this.baseUrl}/offers/${encodeURIComponent(offerId)}/heartbeat`, {
-      method: 'PUT',
-      headers: {
-        Authorization: RondevuAuth.createAuthHeader(this.credentials),
-      },
-    });
-
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Unknown error' }));
-      throw new Error(`Failed to update heartbeat: ${error.error || response.statusText}`);
-    }
-  }
-
-  /**
    * Delete an offer
    */
   async delete(offerId: string): Promise<void> {

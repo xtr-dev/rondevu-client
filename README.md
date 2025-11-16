@@ -418,13 +418,6 @@ Get all offers owned by the authenticated peer.
 const myOffers = await client.offers.getMine();
 ```
 
-#### `client.offers.heartbeat(offerId)`
-Update last_seen timestamp for an offer.
-
-```typescript
-await client.offers.heartbeat(offerId);
-```
-
 #### `client.offers.delete(offerId)`
 Delete a specific offer.
 
