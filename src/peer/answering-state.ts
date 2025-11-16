@@ -6,8 +6,6 @@ import type RondevuPeer from './index.js';
  * Answering an offer and sending to server
  */
 export class AnsweringState extends PeerState {
-  private iceCandidateHandler?: (event: RTCPeerConnectionIceEvent) => void;
-
   constructor(peer: RondevuPeer) {
     super(peer);
   }
@@ -33,19 +31,7 @@ export class AnsweringState extends PeerState {
       await this.peer.offersApi.answer(offerId, answer.sdp!);
 
       // Enable trickle ICE - send candidates as they arrive
-      this.iceCandidateHandler = async (event: RTCPeerConnectionIceEvent) => {
-        if (event.candidate && offerId) {
-          const candidateData = event.candidate.toJSON();
-          if (candidateData.candidate && candidateData.candidate !== '') {
-            try {
-              await this.peer.offersApi.addIceCandidates(offerId, [candidateData]);
-            } catch (err) {
-              console.error('Error sending ICE candidate:', err);
-            }
-          }
-        }
-      };
-      this.peer.pc.addEventListener('icecandidate', this.iceCandidateHandler);
+      this.setupIceCandidateHandler(offerId);
 
       // Transition to exchanging ICE
       const { ExchangingIceState } = await import('./exchanging-ice-state.js');
@@ -54,12 +40,6 @@ export class AnsweringState extends PeerState {
       const { FailedState } = await import('./failed-state.js');
       this.peer.setState(new FailedState(this.peer, error as Error));
       throw error;
-    }
-  }
-
-  cleanup(): void {
-    if (this.iceCandidateHandler) {
-      this.peer.pc.removeEventListener('icecandidate', this.iceCandidateHandler);
     }
   }
 }

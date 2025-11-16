@@ -6,6 +6,8 @@ import type RondevuPeer from './index.js';
  * Implements the State pattern for managing WebRTC connection lifecycle
  */
 export abstract class PeerState {
+  protected iceCandidateHandler?: (event: RTCPeerConnectionIceEvent) => void;
+
   constructor(protected peer: RondevuPeer) {}
 
   abstract get name(): string;
@@ -29,8 +31,31 @@ export abstract class PeerState {
     }
   }
 
+  /**
+   * Setup trickle ICE candidate handler
+   * Sends local ICE candidates to server as they are discovered
+   */
+  protected setupIceCandidateHandler(offerId: string): void {
+    this.iceCandidateHandler = async (event: RTCPeerConnectionIceEvent) => {
+      if (event.candidate && offerId) {
+        const candidateData = event.candidate.toJSON();
+        if (candidateData.candidate && candidateData.candidate !== '') {
+          try {
+            await this.peer.offersApi.addIceCandidates(offerId, [candidateData]);
+          } catch (err) {
+            console.error('Error sending ICE candidate:', err);
+          }
+        }
+      }
+    };
+    this.peer.pc.addEventListener('icecandidate', this.iceCandidateHandler);
+  }
+
   cleanup(): void {
-    // Override in states that need cleanup
+    // Clean up ICE candidate handler if it exists
+    if (this.iceCandidateHandler) {
+      this.peer.pc.removeEventListener('icecandidate', this.iceCandidateHandler);
+    }
   }
 
   async close(): Promise<void> {
