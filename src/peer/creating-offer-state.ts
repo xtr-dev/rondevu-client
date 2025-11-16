@@ -36,7 +36,8 @@ export class CreatingOfferState extends PeerState {
       const offers = await this.peer.offersApi.create([{
         sdp: offer.sdp!,
         topics: options.topics,
-        ttl: options.ttl || 300000
+        ttl: options.ttl || 300000,
+        secret: options.secret
       }]);
 
       const offerId = offers[0].id;

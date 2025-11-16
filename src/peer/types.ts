@@ -22,6 +22,8 @@ export interface PeerOptions {
   topics: string[];
   /** How long the offer should live (milliseconds) */
   ttl?: number;
+  /** Optional secret to protect the offer (max 128 characters) */
+  secret?: string;
   /** Whether to create a data channel automatically (for offerer) */
   createDataChannel?: boolean;
   /** Label for the automatically created data channel */

@@ -28,7 +28,7 @@ export class AnsweringState extends PeerState {
 
       // Send answer to server BEFORE setLocalDescription
       // This registers us as the answerer so ICE candidates will be accepted
-      await this.peer.offersApi.answer(offerId, answer.sdp!);
+      await this.peer.offersApi.answer(offerId, answer.sdp!, options.secret);
 
       // Enable trickle ICE - set up handler before ICE gathering starts
       this.setupIceCandidateHandler();
