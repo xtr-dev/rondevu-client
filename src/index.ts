@@ -24,9 +24,9 @@ export type {
 export { BloomFilter } from './bloom.js';
 
 // Export peer manager
-export { default as RondevuPeer } from './peer.js';
+export { default as RondevuPeer } from './peer/index.js';
 export type {
   PeerOptions,
   PeerEvents,
   PeerTimeouts
-} from './peer.js';
+} from './peer/index.js';

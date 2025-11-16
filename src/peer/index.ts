@@ -1,5 +1,5 @@
-import { RondevuOffers } from './offers.js';
-import { EventEmitter } from './event-emitter.js';
+import { RondevuOffers } from '../offers.js';
+import { EventEmitter } from '../event-emitter.js';
 
 /**
  * Timeout configurations for different connection phases
@@ -94,18 +94,15 @@ class IdleState extends PeerState {
   }
 
   async answer(offerId: string, offerSdp: string, options: PeerOptions): Promise<void> {
-    this.peer.setState(new AnsweringState(this.peer, offerId, offerSdp, options));
+    this.peer.setState(new AnsweringState(this.peer));
     return this.peer.state.answer(offerId, offerSdp, options);
   }
 }
 
 /**
- * Creating offer and gathering ICE candidates
+ * Creating offer and sending to server
  */
 class CreatingOfferState extends PeerState {
-  private timeout?: ReturnType<typeof setTimeout>;
-  private pendingCandidates: any[] = [];
-
   constructor(peer: RondevuPeer, private options: PeerOptions) {
     super(peer);
   }
@@ -124,25 +121,11 @@ class CreatingOfferState extends PeerState {
         this.peer.emitEvent('datachannel', channel);
       }
 
-      // Set up ICE candidate buffering
-      this.peer.pc.onicecandidate = (event) => {
-        if (event.candidate) {
-          const candidateData = event.candidate.toJSON();
-          if (candidateData.candidate && candidateData.candidate !== '') {
-            this.pendingCandidates.push(candidateData);
-          }
-        }
-      };
-
       // Create WebRTC offer
       const offer = await this.peer.pc.createOffer();
       await this.peer.pc.setLocalDescription(offer);
 
-      // Wait for ICE gathering to complete (or timeout)
-      const iceTimeout = options.timeouts?.iceGathering || 10000;
-      await this.waitForIceGathering(iceTimeout);
-
-      // Create offer on Rondevu server (server generates hash-based ID)
+      // Send offer to server immediately (don't wait for ICE)
       const offers = await this.peer.offersApi.create([{
         sdp: offer.sdp!,
         topics: options.topics,
@@ -152,13 +135,7 @@ class CreatingOfferState extends PeerState {
       const offerId = offers[0].id;
       this.peer.offerId = offerId;
 
-      // Send buffered ICE candidates
-      if (this.pendingCandidates.length > 0) {
-        await this.peer.offersApi.addIceCandidates(offerId, this.pendingCandidates);
-        this.pendingCandidates = [];
-      }
-
-      // Enable trickle ICE for future candidates
+      // Enable trickle ICE - send candidates as they arrive
       this.peer.pc.onicecandidate = async (event) => {
         if (event.candidate && offerId) {
           const candidateData = event.candidate.toJSON();
@@ -180,30 +157,6 @@ class CreatingOfferState extends PeerState {
       this.peer.setState(new FailedState(this.peer, error as Error));
       throw error;
     }
-  }
-
-  private async waitForIceGathering(timeout: number): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const checkState = () => {
-        if (this.peer.pc.iceGatheringState === 'complete') {
-          if (this.timeout) clearTimeout(this.timeout);
-          resolve();
-        }
-      };
-
-      this.peer.pc.onicegatheringstatechange = checkState;
-      checkState(); // Check immediately in case already complete
-
-      this.timeout = setTimeout(() => {
-        // Timeout is not fatal - we proceed with candidates we have
-        console.warn('ICE gathering timeout - proceeding with gathered candidates');
-        resolve();
-      }, timeout);
-    });
-  }
-
-  cleanup(): void {
-    if (this.timeout) clearTimeout(this.timeout);
   }
 }
 
@@ -279,18 +232,10 @@ class WaitingForAnswerState extends PeerState {
 }
 
 /**
- * Answering an offer from another peer
+ * Answering an offer and sending to server
  */
 class AnsweringState extends PeerState {
-  private timeout?: ReturnType<typeof setTimeout>;
-  private pendingCandidates: any[] = [];
-
-  constructor(
-    peer: RondevuPeer,
-    private offerId: string,
-    private offerSdp: string,
-    private options: PeerOptions
-  ) {
+  constructor(peer: RondevuPeer) {
     super(peer);
   }
 
@@ -300,25 +245,6 @@ class AnsweringState extends PeerState {
     try {
       this.peer.role = 'answerer';
       this.peer.offerId = offerId;
-
-      const answerTimeout = options.timeouts?.creatingAnswer || 10000;
-
-      this.timeout = setTimeout(() => {
-        this.peer.setState(new FailedState(
-          this.peer,
-          new Error('Timeout creating answer')
-        ));
-      }, answerTimeout);
-
-      // Buffer ICE candidates during answer creation
-      this.peer.pc.onicecandidate = (event) => {
-        if (event.candidate) {
-          const candidateData = event.candidate.toJSON();
-          if (candidateData.candidate && candidateData.candidate !== '') {
-            this.pendingCandidates.push(candidateData);
-          }
-        }
-      };
 
       // Set remote description
       await this.peer.pc.setRemoteDescription({
@@ -330,26 +256,10 @@ class AnsweringState extends PeerState {
       const answer = await this.peer.pc.createAnswer();
       await this.peer.pc.setLocalDescription(answer);
 
-      // Clear the answer creation timeout - ICE gathering has its own timeout
-      if (this.timeout) {
-        clearTimeout(this.timeout);
-        this.timeout = undefined;
-      }
-
-      // Wait for ICE gathering
-      const iceTimeout = options.timeouts?.iceGathering || 10000;
-      await this.waitForIceGathering(iceTimeout);
-
-      // Send answer to server FIRST
+      // Send answer to server immediately (don't wait for ICE)
       await this.peer.offersApi.answer(offerId, answer.sdp!);
 
-      // Send buffered ICE candidates
-      if (this.pendingCandidates.length > 0) {
-        await this.peer.offersApi.addIceCandidates(offerId, this.pendingCandidates);
-        this.pendingCandidates = [];
-      }
-
-      // Enable trickle ICE
+      // Enable trickle ICE - send candidates as they arrive
       this.peer.pc.onicecandidate = async (event) => {
         if (event.candidate && offerId) {
           const candidateData = event.candidate.toJSON();
@@ -369,28 +279,6 @@ class AnsweringState extends PeerState {
       this.peer.setState(new FailedState(this.peer, error as Error));
       throw error;
     }
-  }
-
-  private async waitForIceGathering(timeout: number): Promise<void> {
-    return new Promise((resolve) => {
-      const checkState = () => {
-        if (this.peer.pc.iceGatheringState === 'complete') {
-          resolve();
-        }
-      };
-
-      this.peer.pc.onicegatheringstatechange = checkState;
-      checkState();
-
-      setTimeout(() => {
-        console.warn('ICE gathering timeout - proceeding with gathered candidates');
-        resolve();
-      }, timeout);
-    });
-  }
-
-  cleanup(): void {
-    if (this.timeout) clearTimeout(this.timeout);
   }
 }
 

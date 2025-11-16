@@ -1,6 +1,6 @@
 import { RondevuAuth, Credentials, FetchFunction } from './auth.js';
 import { RondevuOffers } from './offers.js';
-import RondevuPeer from './peer.js';
+import RondevuPeer from './peer/index.js';
 
 export interface RondevuOptions {
   /**
