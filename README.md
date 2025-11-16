@@ -280,6 +280,43 @@ const client = new Rondevu({
 });
 ```
 
+### Node.js with WebRTC (wrtc)
+
+For WebRTC functionality in Node.js, you need to provide WebRTC polyfills since Node.js doesn't have native WebRTC support:
+
+```bash
+npm install wrtc node-fetch
+```
+
+```typescript
+import { Rondevu } from '@xtr-dev/rondevu-client';
+import fetch from 'node-fetch';
+import { RTCPeerConnection, RTCSessionDescription, RTCIceCandidate } from 'wrtc';
+
+const client = new Rondevu({
+  baseUrl: 'https://api.ronde.vu',
+  fetch: fetch as any,
+  RTCPeerConnection,
+  RTCSessionDescription,
+  RTCIceCandidate
+});
+
+// Now you can use WebRTC features
+await client.register();
+const peer = client.createPeer({
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' }
+  ]
+});
+
+// Create offers, answer, etc.
+const offerId = await peer.createOffer({
+  topics: ['my-topic']
+});
+```
+
+**Note:** The `wrtc` package provides WebRTC bindings for Node.js. Alternative packages like `node-webrtc` can also be used - just pass their implementations to the Rondevu constructor.
+
 ### Deno
 
 ```typescript
@@ -500,28 +537,36 @@ import type {
 
 The client library is designed to work across different JavaScript runtimes:
 
-| Environment | Native Fetch | Custom Fetch Needed |
-|-------------|--------------|---------------------|
-| Modern Browsers | ✅ Yes | ❌ No |
-| Node.js 18+ | ✅ Yes | ❌ No |
-| Node.js < 18 | ❌ No | ✅ Yes (node-fetch) |
-| Deno | ✅ Yes | ❌ No |
-| Bun | ✅ Yes | ❌ No |
-| Cloudflare Workers | ✅ Yes | ❌ No |
+| Environment | Native Fetch | Native WebRTC | Polyfills Needed |
+|-------------|--------------|---------------|------------------|
+| Modern Browsers | ✅ Yes | ✅ Yes | ❌ None |
+| Node.js 18+ | ✅ Yes | ❌ No | ✅ WebRTC (wrtc) |
+| Node.js < 18 | ❌ No | ❌ No | ✅ Fetch + WebRTC |
+| Deno | ✅ Yes | ⚠️ Partial | ❌ None (signaling only) |
+| Bun | ✅ Yes | ❌ No | ✅ WebRTC (wrtc) |
+| Cloudflare Workers | ✅ Yes | ❌ No | ❌ None (signaling only) |
 
-**If your environment doesn't have native fetch:**
+**For signaling-only (no WebRTC peer connections):**
+
+Use the low-level API with `client.offers` - no WebRTC polyfills needed.
+
+**For full WebRTC support in Node.js:**
 
 ```bash
-npm install node-fetch
+npm install wrtc node-fetch
 ```
 
 ```typescript
 import { Rondevu } from '@xtr-dev/rondevu-client';
 import fetch from 'node-fetch';
+import { RTCPeerConnection, RTCSessionDescription, RTCIceCandidate } from 'wrtc';
 
 const client = new Rondevu({
-  baseUrl: 'https://rondevu.xtrdev.workers.dev',
-  fetch: fetch as any
+  baseUrl: 'https://api.ronde.vu',
+  fetch: fetch as any,
+  RTCPeerConnection,
+  RTCSessionDescription,
+  RTCIceCandidate
 });
 ```
 

@@ -43,7 +43,7 @@ export class ExchangingIceState extends PeerState {
         for (const cand of candidates) {
           if (cand.candidate && cand.candidate.candidate && cand.candidate.candidate !== '') {
             try {
-              await this.peer.pc.addIceCandidate(new RTCIceCandidate(cand.candidate));
+              await this.peer.pc.addIceCandidate(new this.peer.RTCIceCandidate(cand.candidate));
               this.lastIceTimestamp = cand.createdAt;
             } catch (err) {
               console.warn('Failed to add ICE candidate:', err);

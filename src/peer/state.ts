@@ -27,7 +27,7 @@ export abstract class PeerState {
   async handleIceCandidate(candidate: any): Promise<void> {
     // ICE candidates can arrive in multiple states, so default is to add them
     if (this.peer.pc.remoteDescription) {
-      await this.peer.pc.addIceCandidate(new RTCIceCandidate(candidate));
+      await this.peer.pc.addIceCandidate(new this.peer.RTCIceCandidate(candidate));
     }
   }
 

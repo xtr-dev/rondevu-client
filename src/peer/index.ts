@@ -24,6 +24,11 @@ export default class RondevuPeer extends EventEmitter<PeerEvents> {
   offerId?: string;
   role?: 'offerer' | 'answerer';
 
+  // WebRTC polyfills for Node.js compatibility
+  RTCPeerConnection: typeof RTCPeerConnection;
+  RTCSessionDescription: typeof RTCSessionDescription;
+  RTCIceCandidate: typeof RTCIceCandidate;
+
   private _state: PeerState;
 
   // Event handler references for cleanup
@@ -60,11 +65,34 @@ export default class RondevuPeer extends EventEmitter<PeerEvents> {
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' }
       ]
-    }
+    },
+    rtcPeerConnection?: typeof RTCPeerConnection,
+    rtcSessionDescription?: typeof RTCSessionDescription,
+    rtcIceCandidate?: typeof RTCIceCandidate
   ) {
     super();
     this.offersApi = offersApi;
-    this.pc = new RTCPeerConnection(rtcConfig);
+
+    // Use provided polyfills or fall back to globals
+    this.RTCPeerConnection = rtcPeerConnection || (typeof globalThis.RTCPeerConnection !== 'undefined'
+      ? globalThis.RTCPeerConnection
+      : (() => {
+          throw new Error('RTCPeerConnection is not available. Please provide it in the Rondevu constructor options for Node.js environments.');
+        }) as any);
+
+    this.RTCSessionDescription = rtcSessionDescription || (typeof globalThis.RTCSessionDescription !== 'undefined'
+      ? globalThis.RTCSessionDescription
+      : (() => {
+          throw new Error('RTCSessionDescription is not available. Please provide it in the Rondevu constructor options for Node.js environments.');
+        }) as any);
+
+    this.RTCIceCandidate = rtcIceCandidate || (typeof globalThis.RTCIceCandidate !== 'undefined'
+      ? globalThis.RTCIceCandidate
+      : (() => {
+          throw new Error('RTCIceCandidate is not available. Please provide it in the Rondevu constructor options for Node.js environments.');
+        }) as any);
+
+    this.pc = new this.RTCPeerConnection(rtcConfig);
     this._state = new IdleState(this);
 
     this.setupPeerConnection();

@@ -25,6 +25,42 @@ export interface RondevuOptions {
    * ```
    */
   fetch?: FetchFunction;
+
+  /**
+   * Custom RTCPeerConnection implementation for Node.js environments
+   * Required when using in Node.js with wrtc or similar polyfills
+   *
+   * @example Node.js with wrtc
+   * ```typescript
+   * import { RTCPeerConnection } from 'wrtc';
+   * const client = new Rondevu({ RTCPeerConnection });
+   * ```
+   */
+  RTCPeerConnection?: typeof RTCPeerConnection;
+
+  /**
+   * Custom RTCSessionDescription implementation for Node.js environments
+   * Required when using in Node.js with wrtc or similar polyfills
+   *
+   * @example Node.js with wrtc
+   * ```typescript
+   * import { RTCSessionDescription } from 'wrtc';
+   * const client = new Rondevu({ RTCSessionDescription });
+   * ```
+   */
+  RTCSessionDescription?: typeof RTCSessionDescription;
+
+  /**
+   * Custom RTCIceCandidate implementation for Node.js environments
+   * Required when using in Node.js with wrtc or similar polyfills
+   *
+   * @example Node.js with wrtc
+   * ```typescript
+   * import { RTCIceCandidate } from 'wrtc';
+   * const client = new Rondevu({ RTCIceCandidate });
+   * ```
+   */
+  RTCIceCandidate?: typeof RTCIceCandidate;
 }
 
 export class Rondevu {
@@ -33,10 +69,16 @@ export class Rondevu {
   private credentials?: Credentials;
   private baseUrl: string;
   private fetchFn?: FetchFunction;
+  private rtcPeerConnection?: typeof RTCPeerConnection;
+  private rtcSessionDescription?: typeof RTCSessionDescription;
+  private rtcIceCandidate?: typeof RTCIceCandidate;
 
   constructor(options: RondevuOptions = {}) {
     this.baseUrl = options.baseUrl || 'https://api.ronde.vu';
     this.fetchFn = options.fetch;
+    this.rtcPeerConnection = options.RTCPeerConnection;
+    this.rtcSessionDescription = options.RTCSessionDescription;
+    this.rtcIceCandidate = options.RTCIceCandidate;
 
     this.auth = new RondevuAuth(this.baseUrl, this.fetchFn);
 
@@ -98,6 +140,12 @@ export class Rondevu {
       throw new Error('Not authenticated. Call register() first or provide credentials.');
     }
 
-    return new RondevuPeer(this._offers, rtcConfig);
+    return new RondevuPeer(
+      this._offers,
+      rtcConfig,
+      this.rtcPeerConnection,
+      this.rtcSessionDescription,
+      this.rtcIceCandidate
+    );
   }
 }
