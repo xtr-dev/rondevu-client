@@ -330,6 +330,12 @@ class AnsweringState extends PeerState {
       const answer = await this.peer.pc.createAnswer();
       await this.peer.pc.setLocalDescription(answer);
 
+      // Clear the answer creation timeout - ICE gathering has its own timeout
+      if (this.timeout) {
+        clearTimeout(this.timeout);
+        this.timeout = undefined;
+      }
+
       // Wait for ICE gathering
       const iceTimeout = options.timeouts?.iceGathering || 10000;
       await this.waitForIceGathering(iceTimeout);
@@ -356,8 +362,6 @@ class AnsweringState extends PeerState {
           }
         }
       };
-
-      if (this.timeout) clearTimeout(this.timeout);
 
       // Transition to exchanging ICE
       this.peer.setState(new ExchangingIceState(this.peer, offerId, options));
