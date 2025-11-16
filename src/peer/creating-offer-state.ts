@@ -6,6 +6,8 @@ import type RondevuPeer from './index.js';
  * Creating offer and sending to server
  */
 export class CreatingOfferState extends PeerState {
+  private iceCandidateHandler?: (event: RTCPeerConnectionIceEvent) => void;
+
   constructor(peer: RondevuPeer, private options: PeerOptions) {
     super(peer);
   }
@@ -39,7 +41,7 @@ export class CreatingOfferState extends PeerState {
       this.peer.offerId = offerId;
 
       // Enable trickle ICE - send candidates as they arrive
-      this.peer.pc.onicecandidate = async (event: RTCPeerConnectionIceEvent) => {
+      this.iceCandidateHandler = async (event: RTCPeerConnectionIceEvent) => {
         if (event.candidate && offerId) {
           const candidateData = event.candidate.toJSON();
           if (candidateData.candidate && candidateData.candidate !== '') {
@@ -51,6 +53,7 @@ export class CreatingOfferState extends PeerState {
           }
         }
       };
+      this.peer.pc.addEventListener('icecandidate', this.iceCandidateHandler);
 
       // Transition to waiting for answer
       const { WaitingForAnswerState } = await import('./waiting-for-answer-state.js');
@@ -61,6 +64,12 @@ export class CreatingOfferState extends PeerState {
       const { FailedState } = await import('./failed-state.js');
       this.peer.setState(new FailedState(this.peer, error as Error));
       throw error;
+    }
+  }
+
+  cleanup(): void {
+    if (this.iceCandidateHandler) {
+      this.peer.pc.removeEventListener('icecandidate', this.iceCandidateHandler);
     }
   }
 }

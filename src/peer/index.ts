@@ -26,6 +26,12 @@ export default class RondevuPeer extends EventEmitter<PeerEvents> {
 
   private _state: PeerState;
 
+  // Event handler references for cleanup
+  private connectionStateChangeHandler?: () => void;
+  private dataChannelHandler?: (event: RTCDataChannelEvent) => void;
+  private trackHandler?: (event: RTCTrackEvent) => void;
+  private iceCandidateErrorHandler?: (event: Event) => void;
+
   /**
    * Current connection state name
    */
@@ -68,7 +74,7 @@ export default class RondevuPeer extends EventEmitter<PeerEvents> {
    * Set up peer connection event handlers
    */
   private setupPeerConnection(): void {
-    this.pc.onconnectionstatechange = () => {
+    this.connectionStateChangeHandler = () => {
       switch (this.pc.connectionState) {
         case 'connected':
           this.setState(new ConnectedState(this));
@@ -86,18 +92,22 @@ export default class RondevuPeer extends EventEmitter<PeerEvents> {
           break;
       }
     };
+    this.pc.addEventListener('connectionstatechange', this.connectionStateChangeHandler);
 
-    this.pc.ondatachannel = (event) => {
+    this.dataChannelHandler = (event: RTCDataChannelEvent) => {
       this.emitEvent('datachannel', event.channel);
     };
+    this.pc.addEventListener('datachannel', this.dataChannelHandler);
 
-    this.pc.ontrack = (event) => {
+    this.trackHandler = (event: RTCTrackEvent) => {
       this.emitEvent('track', event);
     };
+    this.pc.addEventListener('track', this.trackHandler);
 
-    this.pc.onicecandidateerror = (event) => {
+    this.iceCandidateErrorHandler = (event: Event) => {
       console.error('ICE candidate error:', event);
     };
+    this.pc.addEventListener('icecandidateerror', this.iceCandidateErrorHandler);
   }
 
   /**
@@ -145,6 +155,20 @@ export default class RondevuPeer extends EventEmitter<PeerEvents> {
    * Close the connection and clean up
    */
   async close(): Promise<void> {
+    // Remove RTCPeerConnection event listeners
+    if (this.connectionStateChangeHandler) {
+      this.pc.removeEventListener('connectionstatechange', this.connectionStateChangeHandler);
+    }
+    if (this.dataChannelHandler) {
+      this.pc.removeEventListener('datachannel', this.dataChannelHandler);
+    }
+    if (this.trackHandler) {
+      this.pc.removeEventListener('track', this.trackHandler);
+    }
+    if (this.iceCandidateErrorHandler) {
+      this.pc.removeEventListener('icecandidateerror', this.iceCandidateErrorHandler);
+    }
+
     await this._state.close();
     this.removeAllListeners();
   }
