@@ -143,11 +143,13 @@ export class RondevuOffers {
   async getTopics(options?: {
     limit?: number;
     offset?: number;
+    startsWith?: string;
   }): Promise<{
     topics: TopicInfo[];
     total: number;
     limit: number;
     offset: number;
+    startsWith?: string;
   }> {
     const params = new URLSearchParams();
 
@@ -157,6 +159,10 @@ export class RondevuOffers {
 
     if (options?.offset) {
       params.set('offset', options.offset.toString());
+    }
+
+    if (options?.startsWith) {
+      params.set('startsWith', options.startsWith);
     }
 
     const url = `${this.baseUrl}/topics${
