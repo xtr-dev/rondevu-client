@@ -180,6 +180,15 @@ export default class RondevuPeer extends EventEmitter<PeerEvents> {
   }
 
   /**
+   * Create a data channel for sending and receiving arbitrary data
+   * This should typically be called by the offerer before creating the offer
+   * The answerer will receive the channel via the 'datachannel' event
+   */
+  createDataChannel(label: string, options?: RTCDataChannelInit): RTCDataChannel {
+    return this.pc.createDataChannel(label, options);
+  }
+
+  /**
    * Close the connection and clean up
    */
   async close(): Promise<void> {
