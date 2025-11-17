@@ -1,4 +1,4 @@
-# @xtr-dev/rondevu-client
+# Rondevu Client
 
 [![npm version](https://img.shields.io/npm/v/@xtr-dev/rondevu-client)](https://www.npmjs.com/package/@xtr-dev/rondevu-client)
 
