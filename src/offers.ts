@@ -9,6 +9,7 @@ export interface CreateOfferRequest {
   topics: string[];
   ttl?: number;
   secret?: string;
+  info?: string;
 }
 
 export interface Offer {
@@ -21,6 +22,7 @@ export interface Offer {
   lastSeen: number;
   secret?: string;
   hasSecret?: boolean;
+  info?: string;
   answererPeerId?: string;
   answerSdp?: string;
   answeredAt?: number;

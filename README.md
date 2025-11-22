@@ -411,7 +411,8 @@ const offers = await client.offers.create([{
   sdp: 'v=0...',  // Your WebRTC offer SDP
   topics: ['movie-xyz', 'hd-content'],
   ttl: 300000,  // 5 minutes
-  secret: 'my-secret-password'  // Optional: protect offer (max 128 chars)
+  secret: 'my-secret-password',  // Optional: protect offer (max 128 chars)
+  info: 'Looking for peers in EU region'  // Optional: public info (max 128 chars)
 }]);
 
 // Discover peers by topic
@@ -489,7 +490,8 @@ const offers = await client.offers.create([
     sdp: 'v=0...',
     topics: ['topic-1', 'topic-2'],
     ttl: 300000,  // optional, default 5 minutes
-    secret: 'my-secret-password'  // optional, max 128 chars
+    secret: 'my-secret-password',  // optional, max 128 chars
+    info: 'Looking for peers in EU region'  // optional, public info, max 128 chars
   }
 ]);
 ```
