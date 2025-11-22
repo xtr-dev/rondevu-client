@@ -29,21 +29,16 @@ export class RondevuAuth {
 
   /**
    * Register a new peer and receive credentials
-   * @param customPeerId - Optional custom peer ID (1-128 characters). If not provided, a random ID will be generated.
-   * @throws Error if registration fails (e.g., peer ID already in use)
+   * Generates a cryptographically random peer ID (128-bit)
+   * @throws Error if registration fails
    */
-  async register(customPeerId?: string): Promise<Credentials> {
-    const body: { peerId?: string } = {};
-    if (customPeerId !== undefined) {
-      body.peerId = customPeerId;
-    }
-
+  async register(): Promise<Credentials> {
     const response = await this.fetchFn(`${this.baseUrl}/register`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify({}),
     });
 
     if (!response.ok) {
