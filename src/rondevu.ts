@@ -100,9 +100,10 @@ export class Rondevu {
 
   /**
    * Register and initialize authenticated client
+   * @param customPeerId - Optional custom peer ID (1-128 characters). If not provided, a random ID will be generated.
    */
-  async register(): Promise<Credentials> {
-    this.credentials = await this.auth.register();
+  async register(customPeerId?: string): Promise<Credentials> {
+    this.credentials = await this.auth.register(customPeerId);
 
     // Create offers API instance
     this._offers = new RondevuOffers(

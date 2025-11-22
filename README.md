@@ -436,13 +436,25 @@ const newPeers = await client.offers.findByTopic('movie-xyz', {
 
 ### Authentication
 
-#### `client.register()`
+#### `client.register(customPeerId?)`
 Register a new peer and receive credentials.
 
 ```typescript
+// Auto-generate peer ID
 const creds = await client.register();
-// { peerId: '...', secret: '...' }
+// { peerId: 'f17c195f067255e357232e34cf0735d9', secret: '...' }
+
+// Or use a custom peer ID (1-128 characters)
+const customCreds = await client.register('my-custom-peer-id');
+// { peerId: 'my-custom-peer-id', secret: '...' }
 ```
+
+**Parameters:**
+- `customPeerId` (optional): Custom peer ID (1-128 characters). If not provided, a random ID will be generated.
+
+**Notes:**
+- Returns 409 Conflict if the custom peer ID is already in use
+- Custom peer IDs must be non-empty and between 1-128 characters
 
 ### Topics
 
