@@ -27,3 +27,28 @@ export type {
   PeerEvents,
   PeerTimeouts
 } from './peer/index.js';
+
+// Export username API
+export { RondevuUsername } from './usernames.js';
+export type { UsernameClaimResult, UsernameCheckResult } from './usernames.js';
+
+// Export services API
+export { RondevuServices } from './services.js';
+export type {
+  ServicePublishResult,
+  PublishServiceOptions,
+  ServiceHandle
+} from './services.js';
+
+// Export discovery API
+export { RondevuDiscovery } from './discovery.js';
+export type {
+  ServiceInfo,
+  ServiceListResult,
+  ServiceQueryResult,
+  ServiceDetails,
+  ConnectResult
+} from './discovery.js';
+
+// Export pool types
+export type { PoolStatus, PooledServiceHandle } from './service-pool.js';

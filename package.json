@@ -1,6 +1,6 @@
 {
   "name": "@xtr-dev/rondevu-client",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "TypeScript client for Rondevu DNS-like WebRTC with username claiming and service discovery",
   "type": "module",
   "main": "dist/index.js",
