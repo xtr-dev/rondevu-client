@@ -1,7 +1,8 @@
 import * as ed25519 from '@noble/ed25519';
 
 // Set SHA-512 hash function for ed25519 (required in @noble/ed25519 v3+)
-// Uses built-in WebCrypto API
+// Uses built-in WebCrypto API which only provides async digest
+// We use the async ed25519 functions (signAsync, verifyAsync, getPublicKeyAsync)
 ed25519.hashes.sha512Async = async (message: Uint8Array) => {
   return new Uint8Array(await crypto.subtle.digest('SHA-512', message as BufferSource));
 };
@@ -58,7 +59,7 @@ export class RondevuUsername {
    */
   async generateKeypair(): Promise<{ publicKey: string; privateKey: string }> {
     const privateKey = ed25519.utils.randomSecretKey();
-    const publicKey = await ed25519.getPublicKey(privateKey);
+    const publicKey = await ed25519.getPublicKeyAsync(privateKey);
 
     return {
       publicKey: bytesToBase64(publicKey),
@@ -74,7 +75,7 @@ export class RondevuUsername {
     const encoder = new TextEncoder();
     const messageBytes = encoder.encode(message);
 
-    const signature = await ed25519.sign(messageBytes, privateKey);
+    const signature = await ed25519.signAsync(messageBytes, privateKey);
     return bytesToBase64(signature);
   }
 
