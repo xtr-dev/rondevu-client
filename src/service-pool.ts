@@ -143,9 +143,9 @@ export class ServicePool {
       onError: (err, ctx) => this.handleError(err, ctx)
     });
 
-    // Add all offers to pool
+    // Add all offers to pool (include the SDP from the initial offer)
     const allOffers = [
-      { id: service.offerId, peerId: this.credentials.peerId, sdp: '', topics: [], expiresAt: service.expiresAt, lastSeen: Date.now() },
+      { id: service.offerId, peerId: this.credentials.peerId, sdp: service.offerSdp, topics: [], expiresAt: service.expiresAt, lastSeen: Date.now() },
       ...additionalOffers
     ];
     await this.offerPool.addOffers(allOffers);
@@ -382,6 +382,7 @@ export class ServicePool {
     serviceId: string;
     uuid: string;
     offerId: string;
+    offerSdp: string;
     expiresAt: number;
   }> {
     const { username, privateKey, serviceFqn, rtcConfig, isPublic, metadata, ttl } = this.options;
@@ -402,6 +403,9 @@ export class ServicePool {
       throw new Error('Failed to generate SDP');
     }
 
+    // Store the SDP before closing
+    const offerSdp = offer.sdp;
+
     // Create signature
     const timestamp = Date.now();
     const message = `publish:${username}:${serviceFqn}:${timestamp}`;
@@ -417,7 +421,7 @@ export class ServicePool {
       body: JSON.stringify({
         username,
         serviceFqn,
-        sdp: offer.sdp,
+        sdp: offerSdp,
         ttl,
         isPublic,
         metadata,
@@ -439,6 +443,7 @@ export class ServicePool {
       serviceId: data.serviceId,
       uuid: data.uuid,
       offerId: data.offerId,
+      offerSdp,
       expiresAt: data.expiresAt
     };
   }
