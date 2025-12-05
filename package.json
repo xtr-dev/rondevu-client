@@ -1,7 +1,7 @@
 {
   "name": "@xtr-dev/rondevu-client",
-  "version": "0.7.12",
-  "description": "TypeScript client for Rondevu topic-based peer discovery and signaling server",
+  "version": "0.8.0",
+  "description": "TypeScript client for Rondevu DNS-like WebRTC with username claiming and service discovery",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -27,6 +27,6 @@
     "README.md"
   ],
   "dependencies": {
-    "@xtr-dev/rondevu-client": "^0.5.1"
+    "@noble/ed25519": "^3.0.0"
   }
 }

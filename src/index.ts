@@ -20,9 +20,6 @@ export type {
   TopicInfo
 } from './offers.js';
 
-// Export bloom filter
-export { BloomFilter } from './bloom.js';
-
 // Export peer manager
 export { default as RondevuPeer } from './peer/index.js';
 export type {

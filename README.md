@@ -2,9 +2,9 @@
 
 [![npm version](https://img.shields.io/npm/v/@xtr-dev/rondevu-client)](https://www.npmjs.com/package/@xtr-dev/rondevu-client)
 
-🌐 **Topic-based peer discovery and WebRTC signaling client**
+🌐 **DNS-like WebRTC client with username claiming and service discovery**
 
-TypeScript/JavaScript client for Rondevu, providing topic-based peer discovery, stateless authentication, and complete WebRTC signaling with trickle ICE support.
+TypeScript/JavaScript client for Rondevu, providing cryptographic username claiming, service publishing, and privacy-preserving discovery.
 
 **Related repositories:**
 - [@xtr-dev/rondevu-client](https://github.com/xtr-dev/rondevu-client) - TypeScript client library ([npm](https://www.npmjs.com/package/@xtr-dev/rondevu-client))
@@ -15,14 +15,12 @@ TypeScript/JavaScript client for Rondevu, providing topic-based peer discovery, 
 
 ## Features
 
-- **Topic-Based Discovery**: Find peers by topics (e.g., torrent infohashes)
-- **Stateless Authentication**: No server-side sessions, portable credentials
-- **Protected Connections**: Optional secret-protected offers for access control
-- **Bloom Filters**: Efficient peer exclusion for repeated discoveries
-- **Multi-Offer Management**: Create and manage multiple offers per peer
+- **Username Claiming**: Cryptographic ownership with Ed25519 signatures
+- **Service Publishing**: Package-style naming (com.example.chat@1.0.0)
+- **Privacy-Preserving Discovery**: UUID-based service index
+- **Public/Private Services**: Control service visibility
 - **Complete WebRTC Signaling**: Full offer/answer and ICE candidate exchange
-- **Trickle ICE**: Send ICE candidates as they're discovered (faster connections)
-- **State Machine**: Clean state-based connection lifecycle
+- **Trickle ICE**: Send ICE candidates as they're discovered
 - **TypeScript**: Full type safety and autocomplete
 
 ## Install
@@ -33,7 +31,7 @@ npm install @xtr-dev/rondevu-client
 
 ## Quick Start
 
-### Creating an Offer (Peer A)
+### Publishing a Service (Alice)
 
 ```typescript
 import { Rondevu } from '@xtr-dev/rondevu-client';
@@ -42,43 +40,43 @@ import { Rondevu } from '@xtr-dev/rondevu-client';
 const client = new Rondevu({ baseUrl: 'https://api.ronde.vu' });
 await client.register();
 
-// Create peer connection
-const peer = client.createPeer();
+// Step 1: Claim username (one-time)
+const claim = await client.usernames.claimUsername('alice');
+client.usernames.saveKeypairToStorage('alice', claim.publicKey, claim.privateKey);
 
-// Set up event listeners
-peer.on('state', (state) => {
-  console.log('Peer state:', state);
-  // States: idle → creating-offer → waiting-for-answer → exchanging-ice → connected
+console.log(`Username claimed: ${claim.username}`);
+console.log(`Expires: ${new Date(claim.expiresAt)}`);
+
+// Step 2: Expose service with handler
+const keypair = client.usernames.loadKeypairFromStorage('alice');
+
+const handle = await client.services.exposeService({
+  username: 'alice',
+  privateKey: keypair.privateKey,
+  serviceFqn: 'com.example.chat@1.0.0',
+  isPublic: true,
+  handler: (channel, peer) => {
+    console.log('📡 New connection established');
+
+    channel.onmessage = (e) => {
+      console.log('📥 Received:', e.data);
+      channel.send(`Echo: ${e.data}`);
+    };
+
+    channel.onopen = () => {
+      console.log('✅ Data channel open');
+    };
+  }
 });
 
-peer.on('connected', () => {
-  console.log('✅ Connected to peer!');
-});
+console.log(`Service published with UUID: ${handle.uuid}`);
+console.log('Waiting for connections...');
 
-peer.on('datachannel', (channel) => {
-  console.log('📡 Data channel ready');
-
-  channel.addEventListener('message', (event) => {
-    console.log('📥 Received:', event.data);
-  });
-
-  channel.addEventListener('open', () => {
-    channel.send('Hello from peer A!');
-  });
-});
-
-// Create offer and advertise on topics
-const offerId = await peer.createOffer({
-  topics: ['my-app', 'room-123'],
-  ttl: 300000,  // 5 minutes
-  secret: 'my-secret-password'  // Optional: protect offer (max 128 chars)
-});
-
-console.log('Offer created:', offerId);
-console.log('Share these topics with peers:', ['my-app', 'room-123']);
+// Later: unpublish
+await handle.unpublish();
 ```
 
-### Answering an Offer (Peer B)
+### Connecting to a Service (Bob)
 
 ```typescript
 import { Rondevu } from '@xtr-dev/rondevu-client';
@@ -87,188 +85,296 @@ import { Rondevu } from '@xtr-dev/rondevu-client';
 const client = new Rondevu({ baseUrl: 'https://api.ronde.vu' });
 await client.register();
 
-// Discover offers by topic
-const offers = await client.offers.findByTopic('my-app', { limit: 10 });
+// Option 1: Connect by username + FQN
+const { peer, channel } = await client.discovery.connect(
+  'alice',
+  'com.example.chat@1.0.0'
+);
 
-if (offers.length > 0) {
-  const offer = offers[0];
+channel.onmessage = (e) => {
+  console.log('📥 Received:', e.data);
+};
 
-  // Create peer connection
-  const peer = client.createPeer();
-
-  // Set up event listeners
-  peer.on('state', (state) => {
-    console.log('Peer state:', state);
-    // States: idle → answering → exchanging-ice → connected
-  });
-
-  peer.on('connected', () => {
-    console.log('✅ Connected!');
-  });
-
-  peer.on('datachannel', (channel) => {
-    console.log('📡 Data channel ready');
-
-    channel.addEventListener('message', (event) => {
-      console.log('📥 Received:', event.data);
-    });
-
-    channel.addEventListener('open', () => {
-      channel.send('Hello from peer B!');
-    });
-  });
-
-  peer.on('failed', (error) => {
-    console.error('❌ Connection failed:', error);
-  });
-
-  // Answer the offer
-  await peer.answer(offer.id, offer.sdp, {
-    topics: offer.topics,
-    secret: 'my-secret-password'  // Required if offer.hasSecret is true
-  });
-}
-```
-
-## Protected Offers
-
-You can protect offers with a secret to control who can answer them. This is useful for private rooms or invite-only connections.
-
-### Creating a Protected Offer
-
-```typescript
-const offerId = await peer.createOffer({
-  topics: ['private-room'],
-  secret: 'my-secret-password'  // Max 128 characters
-});
-
-// Share the secret with authorized peers through a secure channel
-```
-
-### Answering a Protected Offer
-
-```typescript
-const offers = await client.offers.findByTopic('private-room');
-
-// Check if offer requires a secret
-if (offers[0].hasSecret) {
-  console.log('This offer requires a secret');
-}
-
-// Provide the secret when answering
-await peer.answer(offers[0].id, offers[0].sdp, {
-  topics: offers[0].topics,
-  secret: 'my-secret-password'  // Must match the offer's secret
-});
-```
-
-**Notes:**
-- The actual secret is never exposed in public API responses - only a `hasSecret` boolean flag
-- Answerers must provide the correct secret, or the answer will be rejected
-- Secrets are limited to 128 characters
-- Use this for access control, not for cryptographic security (use end-to-end encryption for that)
-
-## Connection Lifecycle
-
-The `RondevuPeer` uses a state machine for connection management:
-
-### Offerer States
-1. **idle** - Initial state
-2. **creating-offer** - Creating WebRTC offer
-3. **waiting-for-answer** - Polling for answer from peer
-4. **exchanging-ice** - Exchanging ICE candidates
-5. **connected** - Successfully connected
-6. **failed** - Connection failed
-7. **closed** - Connection closed
-
-### Answerer States
-1. **idle** - Initial state
-2. **answering** - Creating WebRTC answer
-3. **exchanging-ice** - Exchanging ICE candidates
-4. **connected** - Successfully connected
-5. **failed** - Connection failed
-6. **closed** - Connection closed
-
-### State Events
-
-```typescript
-peer.on('state', (stateName) => {
-  console.log('Current state:', stateName);
-});
+channel.onopen = () => {
+  console.log('✅ Connected!');
+  channel.send('Hello Alice!');
+};
 
 peer.on('connected', () => {
-  // Connection established successfully
-});
-
-peer.on('disconnected', () => {
-  // Connection lost or closed
+  console.log('🎉 WebRTC connection established');
 });
 
 peer.on('failed', (error) => {
-  // Connection failed
-  console.error('Connection error:', error);
+  console.error('❌ Connection failed:', error);
 });
 
-peer.on('datachannel', (channel) => {
-  // Data channel is ready (use channel.addEventListener)
-});
+// Option 2: List services first, then connect
+const services = await client.discovery.listServices('alice');
+console.log(`Found ${services.services.length} services`);
 
-peer.on('track', (event) => {
-  // Media track received (for audio/video streaming)
-  const stream = event.streams[0];
-  videoElement.srcObject = stream;
-});
+for (const service of services.services) {
+  console.log(`- UUID: ${service.uuid}`);
+  if (service.isPublic) {
+    console.log(`  FQN: ${service.serviceFqn}`);
+  }
+}
+
+// Connect by UUID
+const { peer: peer2, channel: channel2 } = await client.discovery.connectByUuid(
+  services.services[0].uuid
+);
 ```
 
-## Trickle ICE
+## API Reference
 
-This library implements **trickle ICE** for faster connection establishment:
-
-- ICE candidates are sent to the server as they're discovered
-- No waiting for all candidates before sending offer/answer
-- Connections establish much faster (milliseconds vs seconds)
-- Proper event listener cleanup to prevent memory leaks
-
-## Adding Media Tracks
+### Main Client
 
 ```typescript
-// Get user's camera/microphone
-const stream = await navigator.mediaDevices.getUserMedia({
-  video: true,
-  audio: true
+const client = new Rondevu({
+  baseUrl: 'https://api.ronde.vu',  // optional, default shown
+  credentials?: { peerId, secret },  // optional, skip registration
+  fetch?: customFetch,               // optional, for Node.js < 18
+  RTCPeerConnection?: RTCPeerConnection,  // optional, for Node.js
+  RTCSessionDescription?: RTCSessionDescription,
+  RTCIceCandidate?: RTCIceCandidate
 });
 
-// Add tracks to peer connection
-stream.getTracks().forEach(track => {
-  peer.addTrack(track, stream);
+// Register and get credentials
+const creds = await client.register();
+// { peerId: '...', secret: '...' }
+
+// Check if authenticated
+client.isAuthenticated(); // boolean
+
+// Get current credentials
+client.getCredentials(); // { peerId, secret } | undefined
+```
+
+### Username API
+
+```typescript
+// Check username availability
+const check = await client.usernames.checkUsername('alice');
+// { available: true } or { available: false, expiresAt: number, publicKey: string }
+
+// Claim username with new keypair
+const claim = await client.usernames.claimUsername('alice');
+// { username, publicKey, privateKey, claimedAt, expiresAt }
+
+// Claim with existing keypair
+const keypair = await client.usernames.generateKeypair();
+const claim2 = await client.usernames.claimUsername('bob', keypair);
+
+// Save keypair to localStorage
+client.usernames.saveKeypairToStorage('alice', publicKey, privateKey);
+
+// Load keypair from localStorage
+const stored = client.usernames.loadKeypairFromStorage('alice');
+// { publicKey, privateKey } | null
+
+// Export keypair for backup
+const exported = client.usernames.exportKeypair('alice');
+// { username, publicKey, privateKey }
+
+// Import keypair from backup
+client.usernames.importKeypair({ username: 'alice', publicKey, privateKey });
+
+// Low-level: Generate keypair
+const { publicKey, privateKey } = await client.usernames.generateKeypair();
+
+// Low-level: Sign message
+const signature = await client.usernames.signMessage(
+  'claim:alice:1234567890',
+  privateKey
+);
+
+// Low-level: Verify signature
+const valid = await client.usernames.verifySignature(
+  'claim:alice:1234567890',
+  signature,
+  publicKey
+);
+```
+
+**Username Rules:**
+- Format: Lowercase alphanumeric + dash (`a-z`, `0-9`, `-`)
+- Length: 3-32 characters
+- Pattern: `^[a-z0-9][a-z0-9-]*[a-z0-9]$`
+- Validity: 365 days from claim/last use
+- Ownership: Secured by Ed25519 public key
+
+### Services API
+
+```typescript
+// Publish service (returns UUID)
+const service = await client.services.publishService({
+  username: 'alice',
+  privateKey: keypair.privateKey,
+  serviceFqn: 'com.example.chat@1.0.0',
+  isPublic: false,              // optional, default false
+  metadata: { description: '...' },  // optional
+  ttl: 5 * 60 * 1000,           // optional, default 5 minutes
+  rtcConfig: { ... }            // optional RTCConfiguration
 });
+// { serviceId, uuid, offerId, expiresAt }
+
+console.log(`Service UUID: ${service.uuid}`);
+console.log('Share this UUID to allow connections');
+
+// Expose service with automatic connection handling
+const handle = await client.services.exposeService({
+  username: 'alice',
+  privateKey: keypair.privateKey,
+  serviceFqn: 'com.example.echo@1.0.0',
+  isPublic: true,
+  handler: (channel, peer) => {
+    channel.onmessage = (e) => {
+      console.log('Received:', e.data);
+      channel.send(`Echo: ${e.data}`);
+    };
+  }
+});
+
+// Later: unpublish
+await handle.unpublish();
+
+// Unpublish service manually
+await client.services.unpublishService(serviceId, username);
 ```
 
-## Peer Properties
+#### Multi-Connection Service Hosting (Offer Pooling)
+
+By default, `exposeService()` creates a single offer and can only accept one connection. To handle multiple concurrent connections, use the `poolSize` option to enable **offer pooling**:
 
 ```typescript
-// Get current state name
-console.log(peer.stateName); // 'idle', 'creating-offer', 'connected', etc.
+// Expose service with offer pooling for multiple concurrent connections
+const handle = await client.services.exposeService({
+  username: 'alice',
+  privateKey: keypair.privateKey,
+  serviceFqn: 'com.example.chat@1.0.0',
+  isPublic: true,
+  poolSize: 5,  // Maintain 5 simultaneous open offers
+  pollingInterval: 2000,  // Optional: polling interval in ms (default: 2000)
+  handler: (channel, peer, connectionId) => {
+    console.log(`📡 New connection: ${connectionId}`);
 
-// Get connection state
-console.log(peer.connectionState); // RTCPeerConnectionState
+    channel.onmessage = (e) => {
+      console.log(`📥 [${connectionId}] Received:`, e.data);
+      channel.send(`Echo: ${e.data}`);
+    };
 
-// Get offer ID (after creating offer or answering)
-console.log(peer.offerId);
+    channel.onclose = () => {
+      console.log(`👋 [${connectionId}] Connection closed`);
+    };
+  },
+  onPoolStatus: (status) => {
+    console.log('Pool status:', {
+      activeOffers: status.activeOffers,
+      activeConnections: status.activeConnections,
+      totalHandled: status.totalConnectionsHandled
+    });
+  },
+  onError: (error, context) => {
+    console.error(`Pool error (${context}):`, error);
+  }
+});
 
-// Get role
-console.log(peer.role); // 'offerer' or 'answerer'
+// Get current pool status
+const status = handle.getStatus();
+console.log(`Active offers: ${status.activeOffers}`);
+console.log(`Active connections: ${status.activeConnections}`);
+
+// Manually add more offers if needed
+await handle.addOffers(3);
 ```
 
-## Closing a Connection
+**How Offer Pooling Works:**
+1. The pool maintains `poolSize` simultaneous open offers at all times
+2. When an offer is answered (connection established), a new offer is automatically created
+3. Polling checks for answers every `pollingInterval` milliseconds (default: 2000ms)
+4. Each connection gets a unique `connectionId` passed to the handler
+5. No limit on total concurrent connections - only pool size (open offers) is controlled
 
+**Use Cases:**
+- Chat servers handling multiple clients
+- File sharing services with concurrent downloads
+- Multiplayer game lobbies
+- Collaborative editing sessions
+- Any service that needs to accept multiple simultaneous connections
+
+**Pool Status Interface:**
 ```typescript
-await peer.close();
+interface PoolStatus {
+  activeOffers: number;          // Current number of open offers
+  activeConnections: number;     // Current number of connected peers
+  totalConnectionsHandled: number;  // Total connections since start
+  failedOfferCreations: number;  // Failed offer creation attempts
+}
 ```
 
-## Custom RTCConfiguration
+**Pooled Service Handle:**
+```typescript
+interface PooledServiceHandle extends ServiceHandle {
+  getStatus: () => PoolStatus;        // Get current pool status
+  addOffers: (count: number) => Promise<void>;  // Manually add offers
+}
+```
+
+**Service FQN Format:**
+- Service name: Reverse domain notation (e.g., `com.example.chat`)
+- Version: Semantic versioning (e.g., `1.0.0`, `2.1.3-beta`)
+- Complete FQN: `service-name@version`
+- Examples: `com.example.chat@1.0.0`, `io.github.alice.notes@0.1.0-beta`
+
+**Validation Rules:**
+- Service name pattern: `^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$`
+- Length: 3-128 characters
+- Minimum 2 components (at least one dot)
+- Version pattern: `^[0-9]+\.[0-9]+\.[0-9]+(-[a-z0-9.-]+)?$`
+
+### Discovery API
 
 ```typescript
+// List all services for a username
+const services = await client.discovery.listServices('alice');
+// {
+//   username: 'alice',
+//   services: [
+//     { uuid: 'abc123', isPublic: false },
+//     { uuid: 'def456', isPublic: true, serviceFqn: '...', metadata: {...} }
+//   ]
+// }
+
+// Query service by FQN
+const query = await client.discovery.queryService('alice', 'com.example.chat@1.0.0');
+// { uuid: 'abc123', allowed: true }
+
+// Get service details by UUID
+const details = await client.discovery.getServiceDetails('abc123');
+// { serviceId, username, serviceFqn, offerId, sdp, isPublic, metadata, ... }
+
+// Connect to service by UUID
+const peer = await client.discovery.connectToService('abc123', {
+  rtcConfig: { ... },           // optional
+  onConnected: () => { ... },   // optional
+  onData: (data) => { ... }     // optional
+});
+
+// Connect by username + FQN (convenience method)
+const { peer, channel } = await client.discovery.connect(
+  'alice',
+  'com.example.chat@1.0.0',
+  { rtcConfig: { ... } }  // optional
+);
+
+// Connect by UUID with channel
+const { peer, channel } = await client.discovery.connectByUuid('abc123');
+```
+
+### Low-Level Peer Connection
+
+```typescript
+// Create peer connection
 const peer = client.createPeer({
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
@@ -278,56 +384,114 @@ const peer = client.createPeer({
       credential: 'pass'
     }
   ],
-  iceTransportPolicy: 'relay' // Force TURN relay (useful for testing)
+  iceTransportPolicy: 'relay'  // optional: force TURN relay
 });
-```
 
-## Timeouts
+// Event listeners
+peer.on('state', (state) => {
+  console.log('Peer state:', state);
+});
 
-Configure connection timeouts:
+peer.on('connected', () => {
+  console.log('✅ Connected');
+});
 
-```typescript
-await peer.createOffer({
-  topics: ['my-topic'],
-  timeouts: {
-    iceGathering: 10000,        // ICE gathering timeout (10s)
-    waitingForAnswer: 30000,    // Waiting for answer timeout (30s)
-    creatingAnswer: 10000,      // Creating answer timeout (10s)
-    iceConnection: 30000        // ICE connection timeout (30s)
+peer.on('disconnected', () => {
+  console.log('🔌 Disconnected');
+});
+
+peer.on('failed', (error) => {
+  console.error('❌ Failed:', error);
+});
+
+peer.on('datachannel', (channel) => {
+  console.log('📡 Data channel ready');
+});
+
+peer.on('track', (event) => {
+  // Media track received
+  const stream = event.streams[0];
+  videoElement.srcObject = stream;
+});
+
+// Create offer
+const offerId = await peer.createOffer({
+  ttl: 300000,  // optional
+  timeouts: {   // optional
+    iceGathering: 10000,
+    waitingForAnswer: 30000,
+    creatingAnswer: 10000,
+    iceConnection: 30000
   }
 });
+
+// Answer offer
+await peer.answer(offerId, sdp);
+
+// Add media tracks
+const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+stream.getTracks().forEach(track => {
+  peer.addTrack(track, stream);
+});
+
+// Close connection
+await peer.close();
+
+// Properties
+peer.stateName;        // 'idle', 'creating-offer', 'connected', etc.
+peer.connectionState;  // RTCPeerConnectionState
+peer.offerId;          // string | undefined
+peer.role;             // 'offerer' | 'answerer' | undefined
 ```
+
+## Connection Lifecycle
+
+### Service Publisher (Offerer)
+1. **idle** - Initial state
+2. **creating-offer** - Creating WebRTC offer
+3. **waiting-for-answer** - Polling for answer from peer
+4. **exchanging-ice** - Exchanging ICE candidates
+5. **connected** - Successfully connected
+6. **failed** - Connection failed
+7. **closed** - Connection closed
+
+### Service Consumer (Answerer)
+1. **idle** - Initial state
+2. **answering** - Creating WebRTC answer
+3. **exchanging-ice** - Exchanging ICE candidates
+4. **connected** - Successfully connected
+5. **failed** - Connection failed
+6. **closed** - Connection closed
 
 ## Platform-Specific Setup
 
-### Node.js 18+ (with native fetch)
-
+### Modern Browsers
 Works out of the box - no additional setup needed.
 
-### Node.js < 18 (without native fetch)
-
-Install node-fetch and provide it to the client:
+### Node.js 18+
+Native fetch is available, but you need WebRTC polyfills:
 
 ```bash
-npm install node-fetch
+npm install wrtc
 ```
 
 ```typescript
 import { Rondevu } from '@xtr-dev/rondevu-client';
-import fetch from 'node-fetch';
+import { RTCPeerConnection, RTCSessionDescription, RTCIceCandidate } from 'wrtc';
 
 const client = new Rondevu({
   baseUrl: 'https://api.ronde.vu',
-  fetch: fetch as any
+  RTCPeerConnection,
+  RTCSessionDescription,
+  RTCIceCandidate
 });
 ```
 
-### Node.js with WebRTC (wrtc)
-
-For WebRTC functionality in Node.js, you need to provide WebRTC polyfills since Node.js doesn't have native WebRTC support:
+### Node.js < 18
+Install both fetch and WebRTC polyfills:
 
 ```bash
-npm install wrtc node-fetch
+npm install node-fetch wrtc
 ```
 
 ```typescript
@@ -342,25 +506,9 @@ const client = new Rondevu({
   RTCSessionDescription,
   RTCIceCandidate
 });
-
-// Now you can use WebRTC features
-await client.register();
-const peer = client.createPeer({
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' }
-  ]
-});
-
-// Create offers, answer, etc.
-const offerId = await peer.createOffer({
-  topics: ['my-topic']
-});
 ```
 
-**Note:** The `wrtc` package provides WebRTC bindings for Node.js. Alternative packages like `node-webrtc` can also be used - just pass their implementations to the Rondevu constructor.
-
 ### Deno
-
 ```typescript
 import { Rondevu } from 'npm:@xtr-dev/rondevu-client';
 
@@ -370,11 +518,9 @@ const client = new Rondevu({
 ```
 
 ### Bun
-
 Works out of the box - no additional setup needed.
 
 ### Cloudflare Workers
-
 ```typescript
 import { Rondevu } from '@xtr-dev/rondevu-client';
 
@@ -390,181 +536,114 @@ export default {
 };
 ```
 
-## Low-Level API Usage
+## Examples
 
-For direct control over the signaling process without WebRTC:
-
-```typescript
-import { Rondevu, BloomFilter } from '@xtr-dev/rondevu-client';
-
-const client = new Rondevu({ baseUrl: 'https://api.ronde.vu' });
-
-// Register and get credentials
-const creds = await client.register();
-console.log('Peer ID:', creds.peerId);
-
-// Save credentials for later use
-localStorage.setItem('rondevu-creds', JSON.stringify(creds));
-
-// Create offer with topics
-const offers = await client.offers.create([{
-  sdp: 'v=0...',  // Your WebRTC offer SDP
-  topics: ['movie-xyz', 'hd-content'],
-  ttl: 300000,  // 5 minutes
-  secret: 'my-secret-password',  // Optional: protect offer (max 128 chars)
-  info: 'Looking for peers in EU region'  // Optional: public info (max 128 chars)
-}]);
-
-// Discover peers by topic
-const discovered = await client.offers.findByTopic('movie-xyz', {
-  limit: 50
-});
-
-console.log(`Found ${discovered.length} peers`);
-
-// Use bloom filter to exclude known peers
-const knownPeers = new Set(['peer-id-1', 'peer-id-2']);
-const bloom = new BloomFilter(1024, 3);
-knownPeers.forEach(id => bloom.add(id));
-
-const newPeers = await client.offers.findByTopic('movie-xyz', {
-  bloomFilter: bloom.toBytes(),
-  limit: 50
-});
-```
-
-## API Reference
-
-### Authentication
-
-#### `client.register()`
-Register a new peer and receive credentials.
-
-Generates a cryptographically random 128-bit peer ID.
+### Echo Service
 
 ```typescript
-const creds = await client.register();
-// { peerId: 'f17c195f067255e357232e34cf0735d9', secret: '...' }
-```
+// Publisher
+const client1 = new Rondevu();
+await client1.register();
 
-### Topics
+const claim = await client1.usernames.claimUsername('alice');
+client1.usernames.saveKeypairToStorage('alice', claim.publicKey, claim.privateKey);
 
-#### `client.offers.getTopics(options?)`
-List all topics with active peer counts (paginated).
+const keypair = client1.usernames.loadKeypairFromStorage('alice');
 
-```typescript
-const result = await client.offers.getTopics({
-  limit: 50,
-  offset: 0
-});
-
-// {
-//   topics: [
-//     { topic: 'movie-xyz', activePeers: 42 },
-//     { topic: 'torrent-abc', activePeers: 15 }
-//   ],
-//   total: 123,
-//   limit: 50,
-//   offset: 0
-// }
-```
-
-### Offers
-
-#### `client.offers.create(offers)`
-Create one or more offers with topics.
-
-```typescript
-const offers = await client.offers.create([
-  {
-    sdp: 'v=0...',
-    topics: ['topic-1', 'topic-2'],
-    ttl: 300000,  // optional, default 5 minutes
-    secret: 'my-secret-password',  // optional, max 128 chars
-    info: 'Looking for peers in EU region'  // optional, public info, max 128 chars
+await client1.services.exposeService({
+  username: 'alice',
+  privateKey: keypair.privateKey,
+  serviceFqn: 'com.example.echo@1.0.0',
+  isPublic: true,
+  handler: (channel, peer) => {
+    channel.onmessage = (e) => {
+      console.log('Received:', e.data);
+      channel.send(`Echo: ${e.data}`);
+    };
   }
-]);
-```
-
-#### `client.offers.findByTopic(topic, options?)`
-Find offers by topic with optional bloom filter.
-
-```typescript
-const offers = await client.offers.findByTopic('movie-xyz', {
-  limit: 50,
-  bloomFilter: bloomBytes  // optional
 });
+
+// Consumer
+const client2 = new Rondevu();
+await client2.register();
+
+const { peer, channel } = await client2.discovery.connect(
+  'alice',
+  'com.example.echo@1.0.0'
+);
+
+channel.onmessage = (e) => console.log('Received:', e.data);
+channel.send('Hello!');
 ```
 
-#### `client.offers.getMine()`
-Get all offers owned by the authenticated peer.
+### File Transfer Service
 
 ```typescript
-const myOffers = await client.offers.getMine();
+// Publisher
+await client.services.exposeService({
+  username: 'alice',
+  privateKey: keypair.privateKey,
+  serviceFqn: 'com.example.files@1.0.0',
+  isPublic: false,
+  handler: (channel, peer) => {
+    channel.binaryType = 'arraybuffer';
+
+    channel.onmessage = (e) => {
+      if (typeof e.data === 'string') {
+        console.log('Request:', JSON.parse(e.data));
+      } else {
+        console.log('Received file chunk:', e.data.byteLength, 'bytes');
+      }
+    };
+  }
+});
+
+// Consumer
+const { peer, channel } = await client.discovery.connect(
+  'alice',
+  'com.example.files@1.0.0'
+);
+
+channel.binaryType = 'arraybuffer';
+
+// Request file
+channel.send(JSON.stringify({ action: 'get', path: '/readme.txt' }));
+
+channel.onmessage = (e) => {
+  if (e.data instanceof ArrayBuffer) {
+    console.log('Received file:', e.data.byteLength, 'bytes');
+  }
+};
 ```
 
-#### `client.offers.delete(offerId)`
-Delete a specific offer.
+### Video Chat Service
 
 ```typescript
-await client.offers.delete(offerId);
-```
+// Publisher
+const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
 
-#### `client.offers.answer(offerId, sdp, secret?)`
-Answer an offer (locks it to answerer).
+const peer = client.createPeer();
+stream.getTracks().forEach(track => peer.addTrack(track, stream));
 
-```typescript
-await client.offers.answer(offerId, answerSdp, 'my-secret-password');
-```
+const offerId = await peer.createOffer({ ttl: 300000 });
 
-**Parameters:**
-- `offerId`: The offer ID to answer
-- `sdp`: The WebRTC answer SDP
-- `secret` (optional): Required if the offer has `hasSecret: true`
+await client.services.publishService({
+  username: 'alice',
+  privateKey: keypair.privateKey,
+  serviceFqn: 'com.example.videochat@1.0.0',
+  isPublic: true
+});
 
-#### `client.offers.getAnswers()`
-Poll for answers to your offers.
+// Consumer
+const { peer, channel } = await client.discovery.connect(
+  'alice',
+  'com.example.videochat@1.0.0'
+);
 
-```typescript
-const answers = await client.offers.getAnswers();
-```
-
-### ICE Candidates
-
-#### `client.offers.addIceCandidates(offerId, candidates)`
-Post ICE candidates for an offer.
-
-```typescript
-await client.offers.addIceCandidates(offerId, [
-  { candidate: 'candidate:1 1 UDP...', sdpMid: '0', sdpMLineIndex: 0 }
-]);
-```
-
-#### `client.offers.getIceCandidates(offerId, since?)`
-Get ICE candidates from the other peer.
-
-```typescript
-const candidates = await client.offers.getIceCandidates(offerId, since);
-```
-
-### Bloom Filter
-
-```typescript
-import { BloomFilter } from '@xtr-dev/rondevu-client';
-
-// Create filter: size=1024 bits, hash=3 functions
-const bloom = new BloomFilter(1024, 3);
-
-// Add items
-bloom.add('peer-id-1');
-bloom.add('peer-id-2');
-
-// Test membership
-bloom.test('peer-id-1');  // true (probably)
-bloom.test('unknown');    // false (definitely)
-
-// Export for API
-const bytes = bloom.toBytes();
+peer.on('track', (event) => {
+  const remoteStream = event.streams[0];
+  videoElement.srcObject = remoteStream;
+});
 ```
 
 ## TypeScript
@@ -574,54 +653,40 @@ All types are exported:
 ```typescript
 import type {
   Credentials,
-  Offer,
-  CreateOfferRequest,
-  TopicInfo,
-  IceCandidate,
-  FetchFunction,
   RondevuOptions,
+
+  // Username types
+  UsernameCheckResult,
+  UsernameClaimResult,
+  Keypair,
+
+  // Service types
+  ServicePublishResult,
+  PublishServiceOptions,
+  ServiceHandle,
+
+  // Discovery types
+  ServiceInfo,
+  ServiceListResult,
+  ServiceQueryResult,
+  ServiceDetails,
+  ConnectResult,
+
+  // Peer types
   PeerOptions,
   PeerEvents,
   PeerTimeouts
 } from '@xtr-dev/rondevu-client';
 ```
 
-## Environment Compatibility
+## Migration from V1
 
-The client library is designed to work across different JavaScript runtimes:
+V2 is a **breaking change** that replaces topic-based discovery with username claiming and service publishing. See the main [MIGRATION.md](../MIGRATION.md) for detailed migration guide.
 
-| Environment | Native Fetch | Native WebRTC | Polyfills Needed |
-|-------------|--------------|---------------|------------------|
-| Modern Browsers | ✅ Yes | ✅ Yes | ❌ None |
-| Node.js 18+ | ✅ Yes | ❌ No | ✅ WebRTC (wrtc) |
-| Node.js < 18 | ❌ No | ❌ No | ✅ Fetch + WebRTC |
-| Deno | ✅ Yes | ⚠️ Partial | ❌ None (signaling only) |
-| Bun | ✅ Yes | ❌ No | ✅ WebRTC (wrtc) |
-| Cloudflare Workers | ✅ Yes | ❌ No | ❌ None (signaling only) |
-
-**For signaling-only (no WebRTC peer connections):**
-
-Use the low-level API with `client.offers` - no WebRTC polyfills needed.
-
-**For full WebRTC support in Node.js:**
-
-```bash
-npm install wrtc node-fetch
-```
-
-```typescript
-import { Rondevu } from '@xtr-dev/rondevu-client';
-import fetch from 'node-fetch';
-import { RTCPeerConnection, RTCSessionDescription, RTCIceCandidate } from 'wrtc';
-
-const client = new Rondevu({
-  baseUrl: 'https://api.ronde.vu',
-  fetch: fetch as any,
-  RTCPeerConnection,
-  RTCSessionDescription,
-  RTCIceCandidate
-});
-```
+**Key Changes:**
+- ❌ Removed: `offers.findByTopic()`, `offers.getTopics()`, bloom filters
+- ✅ Added: `usernames.*`, `services.*`, `discovery.*` APIs
+- ✅ Changed: Focus on service-based discovery instead of topics
 
 ## License
 
