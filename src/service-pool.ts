@@ -241,7 +241,13 @@ export class ServicePool {
       peer.role = 'offerer';
       peer.offerId = answer.offerId;
 
-      // Set remote description (the answer)
+      // Set local description (the original offer) first
+      await peer.pc.setLocalDescription({
+        type: 'offer',
+        sdp: answer.offerSdp
+      });
+
+      // Now set remote description (the answer)
       await peer.pc.setRemoteDescription({
         type: 'answer',
         sdp: answer.sdp

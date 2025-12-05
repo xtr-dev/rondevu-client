@@ -6,7 +6,8 @@ import { RondevuOffers, Offer } from './offers.js';
 export interface AnsweredOffer {
   offerId: string;
   answererId: string;
-  sdp: string;
+  sdp: string; // Answer SDP
+  offerSdp: string; // Original offer SDP
   answeredAt: number;
 }
 
@@ -110,11 +111,18 @@ export class OfferPool {
 
       // Process each answer
       for (const answer of myAnswers) {
-        // Notify ServicePool
+        // Get the original offer
+        const offer = this.offers.get(answer.offerId);
+        if (!offer) {
+          continue; // Offer already consumed, skip
+        }
+
+        // Notify ServicePool with both answer and original offer SDP
         await this.options.onAnswered({
           offerId: answer.offerId,
           answererId: answer.answererId,
           sdp: answer.sdp,
+          offerSdp: offer.sdp,
           answeredAt: answer.answeredAt
         });
 
