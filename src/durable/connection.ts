@@ -324,11 +324,20 @@ export class DurableConnection extends EventEmitter<DurableConnectionEvents> {
     };
 
     this.peerDataChannelHandler = (channel: RTCDataChannel) => {
-      // Find matching durable channel and attach
-      const durableChannel = this.channels.get(channel.label);
-      if (durableChannel) {
-        durableChannel.attachToChannel(channel);
+      // Find or create durable channel
+      let durableChannel = this.channels.get(channel.label);
+
+      if (!durableChannel) {
+        // Auto-create channel for incoming data channels
+        durableChannel = new DurableChannel(channel.label, {
+          maxQueueSize: this.config.maxQueueSize,
+          maxMessageAge: this.config.maxMessageAge
+        });
+        this.channels.set(channel.label, durableChannel);
       }
+
+      // Attach the received channel
+      durableChannel.attachToChannel(channel);
     };
 
     peer.on('connected', this.peerConnectedHandler);
