@@ -92,6 +92,7 @@ export interface PooledServiceHandle extends ServiceHandle {
 export class ServicePool {
   private offerPool?: OfferPool;
   private connections: Map<string, ConnectionInfo> = new Map();
+  private peerConnections: Map<string, RTCPeerConnection> = new Map();
   private status: PoolStatus = {
     activeOffers: 0,
     activeConnections: 0,
@@ -125,10 +126,12 @@ export class ServicePool {
 
     // 2. Create additional offers for pool (poolSize - 1)
     const additionalOffers: Offer[] = [];
+    const additionalPeerConnections: RTCPeerConnection[] = [];
     if (poolSize > 1) {
       try {
-        const offers = await this.createOffers(poolSize - 1);
-        additionalOffers.push(...offers);
+        const result = await this.createOffers(poolSize - 1);
+        additionalOffers.push(...result.offers);
+        additionalPeerConnections.push(...result.peerConnections);
       } catch (error) {
         this.handleError(error as Error, 'initial-offer-creation');
       }
@@ -143,12 +146,16 @@ export class ServicePool {
       onError: (err, ctx) => this.handleError(err, ctx)
     });
 
-    // Add all offers to pool (include the SDP from the initial offer)
+    // Add all offers to pool with their peer connections
     const allOffers = [
       { id: service.offerId, peerId: this.credentials.peerId, sdp: service.offerSdp, topics: [], expiresAt: service.expiresAt, lastSeen: Date.now() },
       ...additionalOffers
     ];
-    await this.offerPool.addOffers(allOffers);
+    const allPeerConnections = [
+      service.peerConnection,
+      ...additionalPeerConnections
+    ];
+    await this.offerPool.addOffers(allOffers, allPeerConnections);
 
     // 4. Start polling
     await this.offerPool.start();
@@ -176,7 +183,19 @@ export class ServicePool {
       await this.offerPool.stop();
     }
 
-    // 2. Delete remaining offers
+    // 2. Close peer connections from the pool
+    if (this.offerPool) {
+      const poolPeerConnections = this.offerPool.getActivePeerConnections();
+      poolPeerConnections.forEach(pc => {
+        try {
+          pc.close();
+        } catch {
+          // Ignore errors during cleanup
+        }
+      });
+    }
+
+    // 3. Delete remaining offers
     if (this.offerPool) {
       const offerIds = this.offerPool.getActiveOfferIds();
       await Promise.allSettled(
@@ -184,7 +203,7 @@ export class ServicePool {
       );
     }
 
-    // 3. Close active connections
+    // 4. Close active connections
     const closePromises = Array.from(this.connections.values()).map(
       async (conn) => {
         try {
@@ -198,7 +217,7 @@ export class ServicePool {
     );
     await Promise.allSettled(closePromises);
 
-    // 4. Delete service if we have a serviceId
+    // 5. Delete service if we have a serviceId
     if (this.serviceId) {
       try {
         const response = await fetch(`${this.baseUrl}/services/${this.serviceId}`, {
@@ -230,24 +249,37 @@ export class ServicePool {
     const connectionId = this.generateConnectionId();
 
     try {
-      // Create peer connection
+      // Use the existing peer connection from the pool
       const peer = new RondevuPeer(
         this.offersApi,
         this.options.rtcConfig || {
           iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-        }
+        },
+        answer.peerConnection // Use the existing peer connection
       );
 
       peer.role = 'offerer';
       peer.offerId = answer.offerId;
 
-      // Set local description (the original offer) first
-      await peer.pc.setLocalDescription({
-        type: 'offer',
-        sdp: answer.offerSdp
-      });
+      // Verify peer connection is in correct state
+      if (peer.pc.signalingState !== 'have-local-offer') {
+        console.error('Peer connection state info:', {
+          signalingState: peer.pc.signalingState,
+          connectionState: peer.pc.connectionState,
+          iceConnectionState: peer.pc.iceConnectionState,
+          iceGatheringState: peer.pc.iceGatheringState,
+          hasLocalDescription: !!peer.pc.localDescription,
+          hasRemoteDescription: !!peer.pc.remoteDescription,
+          localDescriptionType: peer.pc.localDescription?.type,
+          remoteDescriptionType: peer.pc.remoteDescription?.type,
+          offerId: answer.offerId
+        });
+        throw new Error(
+          `Invalid signaling state: ${peer.pc.signalingState}. Expected 'have-local-offer' to set remote answer.`
+        );
+      }
 
-      // Now set remote description (the answer)
+      // Set remote description (the answer)
       await peer.pc.setRemoteDescription({
         type: 'answer',
         sdp: answer.sdp
@@ -323,14 +355,15 @@ export class ServicePool {
   /**
    * Create multiple offers
    */
-  private async createOffers(count: number): Promise<Offer[]> {
+  private async createOffers(count: number): Promise<{ offers: Offer[], peerConnections: RTCPeerConnection[] }> {
     if (count <= 0) {
-      return [];
+      return { offers: [], peerConnections: [] };
     }
 
     // Server supports max 10 offers per request
     const batchSize = Math.min(count, 10);
     const offers: Offer[] = [];
+    const peerConnections: RTCPeerConnection[] = [];
 
     try {
       // Create peer connections and generate offers
@@ -358,8 +391,8 @@ export class ServicePool {
           ttl: this.options.ttl
         });
 
-        // Close the PC immediately - we only needed the SDP
-        pc.close();
+        // Keep peer connection alive - DO NOT CLOSE
+        peerConnections.push(pc);
       }
 
       // Batch create offers
@@ -367,12 +400,14 @@ export class ServicePool {
       offers.push(...createdOffers);
 
     } catch (error) {
+      // Close any created peer connections on error
+      peerConnections.forEach(pc => pc.close());
       this.status.failedOfferCreations++;
       this.handleError(error as Error, 'offer-creation');
       throw error;
     }
 
-    return offers;
+    return { offers, peerConnections };
   }
 
   /**
@@ -384,6 +419,7 @@ export class ServicePool {
     offerId: string;
     offerSdp: string;
     expiresAt: number;
+    peerConnection: RTCPeerConnection;
   }> {
     const { username, privateKey, serviceFqn, rtcConfig, isPublic, metadata, ttl } = this.options;
 
@@ -403,7 +439,7 @@ export class ServicePool {
       throw new Error('Failed to generate SDP');
     }
 
-    // Store the SDP before closing
+    // Store the SDP
     const offerSdp = offer.sdp;
 
     // Create signature
@@ -430,9 +466,8 @@ export class ServicePool {
       })
     });
 
-    pc.close();
-
     if (!response.ok) {
+      pc.close();
       const error = await response.json();
       throw new Error(error.error || 'Failed to publish service');
     }
@@ -444,7 +479,8 @@ export class ServicePool {
       uuid: data.uuid,
       offerId: data.offerId,
       offerSdp,
-      expiresAt: data.expiresAt
+      expiresAt: data.expiresAt,
+      peerConnection: pc // Keep peer connection alive
     };
   }
 
@@ -456,8 +492,8 @@ export class ServicePool {
       throw new Error('Pool not started');
     }
 
-    const offers = await this.createOffers(count);
-    await this.offerPool.addOffers(offers);
+    const result = await this.createOffers(count);
+    await this.offerPool.addOffers(result.offers, result.peerConnections);
     this.updateStatus();
   }
 

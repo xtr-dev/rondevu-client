@@ -7,7 +7,7 @@ export interface AnsweredOffer {
   offerId: string;
   answererId: string;
   sdp: string; // Answer SDP
-  offerSdp: string; // Original offer SDP
+  peerConnection: RTCPeerConnection; // Original peer connection
   answeredAt: number;
 }
 
@@ -25,7 +25,7 @@ export interface OfferPoolOptions {
   onAnswered: (answer: AnsweredOffer) => Promise<void>;
 
   /** Callback to create new offers when refilling the pool */
-  onRefill: (count: number) => Promise<Offer[]>;
+  onRefill: (count: number) => Promise<{ offers: Offer[], peerConnections: RTCPeerConnection[] }>;
 
   /** Error handler for pool operations */
   onError: (error: Error, context: string) => void;
@@ -40,6 +40,7 @@ export interface OfferPoolOptions {
  */
 export class OfferPool {
   private offers: Map<string, Offer> = new Map();
+  private peerConnections: Map<string, RTCPeerConnection> = new Map();
   private polling: boolean = false;
   private pollingTimer?: ReturnType<typeof setInterval>;
   private lastPollTime: number = 0;
@@ -53,11 +54,15 @@ export class OfferPool {
   }
 
   /**
-   * Add offers to the pool
+   * Add offers to the pool with their peer connections
    */
-  async addOffers(offers: Offer[]): Promise<void> {
-    for (const offer of offers) {
+  async addOffers(offers: Offer[], peerConnections?: RTCPeerConnection[]): Promise<void> {
+    for (let i = 0; i < offers.length; i++) {
+      const offer = offers[i];
       this.offers.set(offer.id, offer);
+      if (peerConnections && peerConnections[i]) {
+        this.peerConnections.set(offer.id, peerConnections[i]);
+      }
     }
   }
 
@@ -111,23 +116,26 @@ export class OfferPool {
 
       // Process each answer
       for (const answer of myAnswers) {
-        // Get the original offer
+        // Get the original offer and peer connection
         const offer = this.offers.get(answer.offerId);
-        if (!offer) {
-          continue; // Offer already consumed, skip
+        const pc = this.peerConnections.get(answer.offerId);
+
+        if (!offer || !pc) {
+          continue; // Offer or peer connection already consumed, skip
         }
 
-        // Notify ServicePool with both answer and original offer SDP
+        // Remove from pool BEFORE processing to prevent duplicate processing
+        this.offers.delete(answer.offerId);
+        this.peerConnections.delete(answer.offerId);
+
+        // Notify ServicePool with answer and original peer connection
         await this.options.onAnswered({
           offerId: answer.offerId,
           answererId: answer.answererId,
           sdp: answer.sdp,
-          offerSdp: offer.sdp,
+          peerConnection: pc,
           answeredAt: answer.answeredAt
         });
-
-        // Remove consumed offer from pool
-        this.offers.delete(answer.offerId);
       }
 
       // Immediate refill if below pool size
@@ -135,8 +143,8 @@ export class OfferPool {
         const needed = this.options.poolSize - this.offers.size;
 
         try {
-          const newOffers = await this.options.onRefill(needed);
-          await this.addOffers(newOffers);
+          const result = await this.options.onRefill(needed);
+          await this.addOffers(result.offers, result.peerConnections);
         } catch (refillError) {
           this.options.onError(
             refillError as Error,
@@ -164,6 +172,13 @@ export class OfferPool {
    */
   getActiveOfferIds(): string[] {
     return Array.from(this.offers.keys());
+  }
+
+  /**
+   * Get all active peer connections
+   */
+  getActivePeerConnections(): RTCPeerConnection[] {
+    return Array.from(this.peerConnections.values());
   }
 
   /**

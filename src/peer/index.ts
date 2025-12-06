@@ -66,6 +66,7 @@ export default class RondevuPeer extends EventEmitter<PeerEvents> {
         { urls: 'stun:stun1.l.google.com:19302' }
       ]
     },
+    existingPeerConnection?: RTCPeerConnection,
     rtcPeerConnection?: typeof RTCPeerConnection,
     rtcSessionDescription?: typeof RTCSessionDescription,
     rtcIceCandidate?: typeof RTCIceCandidate
@@ -92,7 +93,8 @@ export default class RondevuPeer extends EventEmitter<PeerEvents> {
           throw new Error('RTCIceCandidate is not available. Please provide it in the Rondevu constructor options for Node.js environments.');
         }) as any);
 
-    this.pc = new this.RTCPeerConnection(rtcConfig);
+    // Use existing peer connection if provided, otherwise create new one
+    this.pc = existingPeerConnection || new this.RTCPeerConnection(rtcConfig);
     this._state = new IdleState(this);
 
     this.setupPeerConnection();

@@ -177,6 +177,7 @@ export class Rondevu {
     return new RondevuPeer(
       this._offers,
       rtcConfig,
+      undefined, // No existing peer connection
       this.rtcPeerConnection,
       this.rtcSessionDescription,
       this.rtcIceCandidate
