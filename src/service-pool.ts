@@ -2,7 +2,6 @@ import { RondevuOffers, Offer } from './offers.js';
 import { RondevuUsername } from './usernames.js';
 import RondevuPeer from './peer/index.js';
 import { OfferPool, AnsweredOffer } from './offer-pool.js';
-import { ServiceHandle } from './services.js';
 
 /**
  * Connection information for tracking active connections
@@ -73,9 +72,21 @@ export interface ServicePoolOptions {
 }
 
 /**
- * Extended service handle with pool-specific methods
+ * Service handle with pool-specific methods
  */
-export interface PooledServiceHandle extends ServiceHandle {
+export interface PooledServiceHandle {
+  /** Service ID */
+  serviceId: string;
+
+  /** Service UUID */
+  uuid: string;
+
+  /** Offer ID */
+  offerId: string;
+
+  /** Unpublish the service */
+  unpublish: () => Promise<void>;
+
   /** Get current pool status */
   getStatus: () => PoolStatus;
 

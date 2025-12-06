@@ -1,9 +1,15 @@
 import { RondevuAuth, Credentials, FetchFunction } from './auth.js';
 import { RondevuOffers } from './offers.js';
 import { RondevuUsername } from './usernames.js';
-import { RondevuServices } from './services.js';
-import { RondevuDiscovery } from './discovery.js';
 import RondevuPeer from './peer/index.js';
+import { DurableService } from './durable/service.js';
+import { DurableConnection } from './durable/connection.js';
+import { DurableChannel } from './durable/channel.js';
+import type {
+  DurableServiceConfig,
+  DurableConnectionConfig,
+  ConnectionInfo
+} from './durable/types.js';
 
 export interface RondevuOptions {
   /**
@@ -71,8 +77,6 @@ export class Rondevu {
   readonly usernames: RondevuUsername;
 
   private _offers?: RondevuOffers;
-  private _services?: RondevuServices;
-  private _discovery?: RondevuDiscovery;
   private credentials?: Credentials;
   private baseUrl: string;
   private fetchFn?: FetchFunction;
@@ -93,14 +97,12 @@ export class Rondevu {
     if (options.credentials) {
       this.credentials = options.credentials;
       this._offers = new RondevuOffers(this.baseUrl, this.credentials, this.fetchFn);
-      this._services = new RondevuServices(this.baseUrl, this.credentials);
-      this._discovery = new RondevuDiscovery(this.baseUrl, this.credentials);
     }
   }
 
   /**
    * Get offers API (low-level access, requires authentication)
-   * For most use cases, use services and discovery APIs instead
+   * For most use cases, use the durable connection APIs instead
    */
   get offers(): RondevuOffers {
     if (!this._offers) {
@@ -110,40 +112,18 @@ export class Rondevu {
   }
 
   /**
-   * Get services API (requires authentication)
-   */
-  get services(): RondevuServices {
-    if (!this._services) {
-      throw new Error('Not authenticated. Call register() first or provide credentials.');
-    }
-    return this._services;
-  }
-
-  /**
-   * Get discovery API (requires authentication)
-   */
-  get discovery(): RondevuDiscovery {
-    if (!this._discovery) {
-      throw new Error('Not authenticated. Call register() first or provide credentials.');
-    }
-    return this._discovery;
-  }
-
-  /**
    * Register and initialize authenticated client
    * Generates a cryptographically random peer ID (128-bit)
    */
   async register(): Promise<Credentials> {
     this.credentials = await this.auth.register();
 
-    // Create API instances
+    // Create offers API instance
     this._offers = new RondevuOffers(
       this.baseUrl,
       this.credentials,
       this.fetchFn
     );
-    this._services = new RondevuServices(this.baseUrl, this.credentials);
-    this._discovery = new RondevuDiscovery(this.baseUrl, this.credentials);
 
     return this.credentials;
   }
@@ -182,5 +162,135 @@ export class Rondevu {
       this.rtcSessionDescription,
       this.rtcIceCandidate
     );
+  }
+
+  /**
+   * Expose a durable service with automatic reconnection and TTL refresh
+   *
+   * Creates a service that handles incoming connections with automatic
+   * reconnection and message queuing during network interruptions.
+   *
+   * @param config Service configuration
+   * @returns DurableService instance
+   *
+   * @example
+   * ```typescript
+   * const service = await client.exposeService({
+   *   username: 'alice',
+   *   privateKey: keypair.privateKey,
+   *   serviceFqn: 'chat@1.0.0',
+   *   poolSize: 10,
+   *   handler: (channel, connectionId) => {
+   *     channel.on('message', (data) => {
+   *       console.log('Received:', data);
+   *       channel.send(`Echo: ${data}`);
+   *     });
+   *   }
+   * });
+   *
+   * await service.start();
+   * ```
+   */
+  async exposeService(
+    config: DurableServiceConfig & {
+      handler: (channel: DurableChannel, connectionId: string) => void | Promise<void>;
+    }
+  ): Promise<DurableService> {
+    if (!this._offers || !this.credentials) {
+      throw new Error('Not authenticated. Call register() first or provide credentials.');
+    }
+
+    const service = new DurableService(
+      this._offers,
+      this.baseUrl,
+      this.credentials,
+      config.handler,
+      config
+    );
+
+    return service;
+  }
+
+  /**
+   * Create a durable connection to a service by username and service FQN
+   *
+   * Establishes a WebRTC connection with automatic reconnection and
+   * message queuing during network interruptions.
+   *
+   * @param username Username of the service provider
+   * @param serviceFqn Fully qualified service name
+   * @param config Optional connection configuration
+   * @returns DurableConnection instance
+   *
+   * @example
+   * ```typescript
+   * const connection = await client.connect('alice', 'chat@1.0.0', {
+   *   maxReconnectAttempts: 5
+   * });
+   *
+   * const channel = connection.createChannel('main');
+   * channel.on('message', (data) => {
+   *   console.log('Received:', data);
+   * });
+   *
+   * await connection.connect();
+   * channel.send('Hello!');
+   * ```
+   */
+  async connect(
+    username: string,
+    serviceFqn: string,
+    config?: DurableConnectionConfig
+  ): Promise<DurableConnection> {
+    if (!this._offers) {
+      throw new Error('Not authenticated. Call register() first or provide credentials.');
+    }
+
+    const connectionInfo: ConnectionInfo = {
+      username,
+      serviceFqn
+    };
+
+    return new DurableConnection(this._offers, connectionInfo, config);
+  }
+
+  /**
+   * Create a durable connection to a service by UUID
+   *
+   * Establishes a WebRTC connection with automatic reconnection and
+   * message queuing during network interruptions.
+   *
+   * @param uuid Service UUID
+   * @param config Optional connection configuration
+   * @returns DurableConnection instance
+   *
+   * @example
+   * ```typescript
+   * const connection = await client.connectByUuid('service-uuid-here', {
+   *   maxReconnectAttempts: 5
+   * });
+   *
+   * const channel = connection.createChannel('main');
+   * channel.on('message', (data) => {
+   *   console.log('Received:', data);
+   * });
+   *
+   * await connection.connect();
+   * channel.send('Hello!');
+   * ```
+   */
+  async connectByUuid(
+    uuid: string,
+    config?: DurableConnectionConfig
+  ): Promise<DurableConnection> {
+    if (!this._offers) {
+      throw new Error('Not authenticated. Call register() first or provide credentials.');
+    }
+
+    const connectionInfo: ConnectionInfo = {
+      uuid
+    };
+
+    return new DurableConnection(this._offers, connectionInfo, config);
   }
 }

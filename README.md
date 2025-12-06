@@ -2,9 +2,9 @@
 
 [![npm version](https://img.shields.io/npm/v/@xtr-dev/rondevu-client)](https://www.npmjs.com/package/@xtr-dev/rondevu-client)
 
-🌐 **DNS-like WebRTC client with username claiming and service discovery**
+🌐 **WebRTC with durable connections and automatic reconnection**
 
-TypeScript/JavaScript client for Rondevu, providing cryptographic username claiming, service publishing, and privacy-preserving discovery.
+TypeScript/JavaScript client for Rondevu, providing durable WebRTC connections that survive network interruptions with automatic reconnection and message queuing.
 
 **Related repositories:**
 - [@xtr-dev/rondevu-client](https://github.com/xtr-dev/rondevu-client) - TypeScript client library ([npm](https://www.npmjs.com/package/@xtr-dev/rondevu-client))
@@ -15,13 +15,14 @@ TypeScript/JavaScript client for Rondevu, providing cryptographic username claim
 
 ## Features
 
+- **Durable Connections**: Automatic reconnection on network drops
+- **Message Queuing**: Messages sent during disconnections are queued and flushed on reconnect
+- **Durable Channels**: RTCDataChannel wrappers that survive connection drops
+- **TTL Auto-Refresh**: Services automatically republish before expiration
 - **Username Claiming**: Cryptographic ownership with Ed25519 signatures
 - **Service Publishing**: Package-style naming (com.example.chat@1.0.0)
-- **Privacy-Preserving Discovery**: UUID-based service index
-- **Public/Private Services**: Control service visibility
-- **Complete WebRTC Signaling**: Full offer/answer and ICE candidate exchange
-- **Trickle ICE**: Send ICE candidates as they're discovered
 - **TypeScript**: Full type safety and autocomplete
+- **Configurable**: All timeouts, retry limits, and queue sizes are configurable
 
 ## Install
 
@@ -44,36 +45,36 @@ await client.register();
 const claim = await client.usernames.claimUsername('alice');
 client.usernames.saveKeypairToStorage('alice', claim.publicKey, claim.privateKey);
 
-console.log(`Username claimed: ${claim.username}`);
-console.log(`Expires: ${new Date(claim.expiresAt)}`);
-
 // Step 2: Expose service with handler
 const keypair = client.usernames.loadKeypairFromStorage('alice');
 
-const handle = await client.services.exposeService({
+const service = await client.exposeService({
   username: 'alice',
   privateKey: keypair.privateKey,
-  serviceFqn: 'com.example.chat@1.0.0',
+  serviceFqn: 'chat@1.0.0',
   isPublic: true,
-  handler: (channel, peer) => {
-    console.log('📡 New connection established');
+  poolSize: 10,  // Handle 10 concurrent connections
+  handler: (channel, connectionId) => {
+    console.log(`📡 New connection: ${connectionId}`);
 
-    channel.onmessage = (e) => {
-      console.log('📥 Received:', e.data);
-      channel.send(`Echo: ${e.data}`);
-    };
+    channel.on('message', (data) => {
+      console.log('📥 Received:', data);
+      channel.send(`Echo: ${data}`);
+    });
 
-    channel.onopen = () => {
-      console.log('✅ Data channel open');
-    };
+    channel.on('close', () => {
+      console.log(`👋 Connection ${connectionId} closed`);
+    });
   }
 });
 
-console.log(`Service published with UUID: ${handle.uuid}`);
+// Start the service
+const info = await service.start();
+console.log(`Service published with UUID: ${info.uuid}`);
 console.log('Waiting for connections...');
 
-// Later: unpublish
-await handle.unpublish();
+// Later: stop the service
+await service.stop();
 ```
 
 ### Connecting to a Service (Bob)
@@ -85,45 +86,74 @@ import { Rondevu } from '@xtr-dev/rondevu-client';
 const client = new Rondevu({ baseUrl: 'https://api.ronde.vu' });
 await client.register();
 
-// Option 1: Connect by username + FQN
-const { peer, channel } = await client.discovery.connect(
-  'alice',
-  'com.example.chat@1.0.0'
-);
+// Connect to Alice's service
+const connection = await client.connect('alice', 'chat@1.0.0', {
+  maxReconnectAttempts: 5
+});
 
-channel.onmessage = (e) => {
-  console.log('📥 Received:', e.data);
-};
+// Create a durable channel
+const channel = connection.createChannel('main');
 
-channel.onopen = () => {
-  console.log('✅ Connected!');
+channel.on('message', (data) => {
+  console.log('📥 Received:', data);
+});
+
+channel.on('open', () => {
+  console.log('✅ Channel open');
   channel.send('Hello Alice!');
-};
-
-peer.on('connected', () => {
-  console.log('🎉 WebRTC connection established');
 });
 
-peer.on('failed', (error) => {
-  console.error('❌ Connection failed:', error);
+// Listen for connection events
+connection.on('connected', () => {
+  console.log('🎉 Connected to Alice');
 });
 
-// Option 2: List services first, then connect
-const services = await client.discovery.listServices('alice');
-console.log(`Found ${services.services.length} services`);
+connection.on('reconnecting', (attempt, max, delay) => {
+  console.log(`🔄 Reconnecting... (${attempt}/${max}, retry in ${delay}ms)`);
+});
 
-for (const service of services.services) {
-  console.log(`- UUID: ${service.uuid}`);
-  if (service.isPublic) {
-    console.log(`  FQN: ${service.serviceFqn}`);
-  }
-}
+connection.on('disconnected', () => {
+  console.log('🔌 Disconnected');
+});
 
-// Connect by UUID
-const { peer: peer2, channel: channel2 } = await client.discovery.connectByUuid(
-  services.services[0].uuid
-);
+connection.on('failed', (error) => {
+  console.error('❌ Connection failed permanently:', error);
+});
+
+// Establish the connection
+await connection.connect();
+
+// Messages sent during disconnection are automatically queued
+channel.send('This will be queued if disconnected');
+
+// Later: close the connection
+await connection.close();
 ```
+
+## Core Concepts
+
+### DurableConnection
+
+Manages WebRTC peer lifecycle with automatic reconnection:
+- Automatically reconnects when connection drops
+- Exponential backoff with jitter (1s → 2s → 4s → 8s → ... max 30s)
+- Configurable max retry attempts (default: 10)
+- Manages multiple DurableChannel instances
+
+### DurableChannel
+
+Wraps RTCDataChannel with message queuing:
+- Queues messages during disconnection
+- Flushes queue on reconnection
+- Configurable queue size and message age limits
+- RTCDataChannel-compatible API with event emitters
+
+### DurableService
+
+Server-side service with TTL auto-refresh:
+- Automatically republishes service before TTL expires
+- Creates DurableConnection for each incoming peer
+- Manages connection pool for multiple simultaneous connections
 
 ## API Reference
 
@@ -161,39 +191,12 @@ const check = await client.usernames.checkUsername('alice');
 const claim = await client.usernames.claimUsername('alice');
 // { username, publicKey, privateKey, claimedAt, expiresAt }
 
-// Claim with existing keypair
-const keypair = await client.usernames.generateKeypair();
-const claim2 = await client.usernames.claimUsername('bob', keypair);
-
 // Save keypair to localStorage
-client.usernames.saveKeypairToStorage('alice', publicKey, privateKey);
+client.usernames.saveKeypairToStorage('alice', claim.publicKey, claim.privateKey);
 
 // Load keypair from localStorage
-const stored = client.usernames.loadKeypairFromStorage('alice');
+const keypair = client.usernames.loadKeypairFromStorage('alice');
 // { publicKey, privateKey } | null
-
-// Export keypair for backup
-const exported = client.usernames.exportKeypair('alice');
-// { username, publicKey, privateKey }
-
-// Import keypair from backup
-client.usernames.importKeypair({ username: 'alice', publicKey, privateKey });
-
-// Low-level: Generate keypair
-const { publicKey, privateKey } = await client.usernames.generateKeypair();
-
-// Low-level: Sign message
-const signature = await client.usernames.signMessage(
-  'claim:alice:1234567890',
-  privateKey
-);
-
-// Low-level: Verify signature
-const valid = await client.usernames.verifySignature(
-  'claim:alice:1234567890',
-  signature,
-  publicKey
-);
 ```
 
 **Username Rules:**
@@ -203,265 +206,370 @@ const valid = await client.usernames.verifySignature(
 - Validity: 365 days from claim/last use
 - Ownership: Secured by Ed25519 public key
 
-### Services API
+### Durable Service API
 
 ```typescript
-// Publish service (returns UUID)
-const service = await client.services.publishService({
+// Expose a durable service
+const service = await client.exposeService({
   username: 'alice',
   privateKey: keypair.privateKey,
-  serviceFqn: 'com.example.chat@1.0.0',
-  isPublic: false,              // optional, default false
-  metadata: { description: '...' },  // optional
-  ttl: 5 * 60 * 1000,           // optional, default 5 minutes
-  rtcConfig: { ... }            // optional RTCConfiguration
-});
-// { serviceId, uuid, offerId, expiresAt }
+  serviceFqn: 'chat@1.0.0',
 
-console.log(`Service UUID: ${service.uuid}`);
-console.log('Share this UUID to allow connections');
+  // Service options
+  isPublic: true,               // optional, default: false
+  metadata: { version: '1.0' }, // optional
+  ttl: 300000,                  // optional, default: 5 minutes
+  ttlRefreshMargin: 0.2,        // optional, refresh at 80% of TTL
 
-// Expose service with automatic connection handling
-const handle = await client.services.exposeService({
-  username: 'alice',
-  privateKey: keypair.privateKey,
-  serviceFqn: 'com.example.echo@1.0.0',
-  isPublic: true,
-  handler: (channel, peer) => {
-    channel.onmessage = (e) => {
-      console.log('Received:', e.data);
-      channel.send(`Echo: ${e.data}`);
-    };
-  }
-});
+  // Connection pooling
+  poolSize: 10,                 // optional, default: 1
+  pollingInterval: 2000,        // optional, default: 2000ms
 
-// Later: unpublish
-await handle.unpublish();
+  // Connection options (applied to incoming connections)
+  maxReconnectAttempts: 10,     // optional, default: 10
+  reconnectBackoffBase: 1000,   // optional, default: 1000ms
+  reconnectBackoffMax: 30000,   // optional, default: 30000ms
+  reconnectJitter: 0.2,         // optional, default: 0.2 (±20%)
+  connectionTimeout: 30000,     // optional, default: 30000ms
 
-// Unpublish service manually
-await client.services.unpublishService(serviceId, username);
-```
+  // Message queuing
+  maxQueueSize: 1000,           // optional, default: 1000
+  maxMessageAge: 60000,         // optional, default: 60000ms (1 minute)
 
-#### Multi-Connection Service Hosting (Offer Pooling)
-
-By default, `exposeService()` creates a single offer and can only accept one connection. To handle multiple concurrent connections, use the `poolSize` option to enable **offer pooling**:
-
-```typescript
-// Expose service with offer pooling for multiple concurrent connections
-const handle = await client.services.exposeService({
-  username: 'alice',
-  privateKey: keypair.privateKey,
-  serviceFqn: 'com.example.chat@1.0.0',
-  isPublic: true,
-  poolSize: 5,  // Maintain 5 simultaneous open offers
-  pollingInterval: 2000,  // Optional: polling interval in ms (default: 2000)
-  handler: (channel, peer, connectionId) => {
-    console.log(`📡 New connection: ${connectionId}`);
-
-    channel.onmessage = (e) => {
-      console.log(`📥 [${connectionId}] Received:`, e.data);
-      channel.send(`Echo: ${e.data}`);
-    };
-
-    channel.onclose = () => {
-      console.log(`👋 [${connectionId}] Connection closed`);
-    };
+  // WebRTC configuration
+  rtcConfig: {
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' }
+    ]
   },
-  onPoolStatus: (status) => {
-    console.log('Pool status:', {
-      activeOffers: status.activeOffers,
-      activeConnections: status.activeConnections,
-      totalHandled: status.totalConnectionsHandled
+
+  // Connection handler
+  handler: (channel, connectionId) => {
+    // Handle incoming connection
+    channel.on('message', (data) => {
+      console.log('Received:', data);
+      channel.send(`Echo: ${data}`);
     });
-  },
-  onError: (error, context) => {
-    console.error(`Pool error (${context}):`, error);
   }
 });
 
-// Get current pool status
-const status = handle.getStatus();
-console.log(`Active offers: ${status.activeOffers}`);
-console.log(`Active connections: ${status.activeConnections}`);
+// Start the service
+const info = await service.start();
+// { serviceId: '...', uuid: '...', expiresAt: 1234567890 }
 
-// Manually add more offers if needed
-await handle.addOffers(3);
+// Get active connections
+const connections = service.getActiveConnections();
+// ['conn-123', 'conn-456']
+
+// Get service info
+const serviceInfo = service.getServiceInfo();
+// { serviceId: '...', uuid: '...', expiresAt: 1234567890 } | null
+
+// Stop the service
+await service.stop();
 ```
 
-**How Offer Pooling Works:**
-1. The pool maintains `poolSize` simultaneous open offers at all times
-2. When an offer is answered (connection established), a new offer is automatically created
-3. Polling checks for answers every `pollingInterval` milliseconds (default: 2000ms)
-4. Each connection gets a unique `connectionId` passed to the handler
-5. No limit on total concurrent connections - only pool size (open offers) is controlled
-
-**Use Cases:**
-- Chat servers handling multiple clients
-- File sharing services with concurrent downloads
-- Multiplayer game lobbies
-- Collaborative editing sessions
-- Any service that needs to accept multiple simultaneous connections
-
-**Pool Status Interface:**
+**Service Events:**
 ```typescript
-interface PoolStatus {
-  activeOffers: number;          // Current number of open offers
-  activeConnections: number;     // Current number of connected peers
-  totalConnectionsHandled: number;  // Total connections since start
-  failedOfferCreations: number;  // Failed offer creation attempts
-}
+service.on('published', (serviceId, uuid) => {
+  console.log(`Service published: ${uuid}`);
+});
+
+service.on('connection', (connectionId) => {
+  console.log(`New connection: ${connectionId}`);
+});
+
+service.on('disconnection', (connectionId) => {
+  console.log(`Connection closed: ${connectionId}`);
+});
+
+service.on('ttl-refreshed', (expiresAt) => {
+  console.log(`TTL refreshed, expires at: ${new Date(expiresAt)}`);
+});
+
+service.on('error', (error, context) => {
+  console.error(`Service error (${context}):`, error);
+});
+
+service.on('closed', () => {
+  console.log('Service stopped');
+});
 ```
 
-**Pooled Service Handle:**
-```typescript
-interface PooledServiceHandle extends ServiceHandle {
-  getStatus: () => PoolStatus;        // Get current pool status
-  addOffers: (count: number) => Promise<void>;  // Manually add offers
-}
-```
-
-**Service FQN Format:**
-- Service name: Reverse domain notation (e.g., `com.example.chat`)
-- Version: Semantic versioning (e.g., `1.0.0`, `2.1.3-beta`)
-- Complete FQN: `service-name@version`
-- Examples: `com.example.chat@1.0.0`, `io.github.alice.notes@0.1.0-beta`
-
-**Validation Rules:**
-- Service name pattern: `^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$`
-- Length: 3-128 characters
-- Minimum 2 components (at least one dot)
-- Version pattern: `^[0-9]+\.[0-9]+\.[0-9]+(-[a-z0-9.-]+)?$`
-
-### Discovery API
+### Durable Connection API
 
 ```typescript
-// List all services for a username
-const services = await client.discovery.listServices('alice');
-// {
-//   username: 'alice',
-//   services: [
-//     { uuid: 'abc123', isPublic: false },
-//     { uuid: 'def456', isPublic: true, serviceFqn: '...', metadata: {...} }
-//   ]
-// }
+// Connect by username and service FQN
+const connection = await client.connect('alice', 'chat@1.0.0', {
+  // Connection options
+  maxReconnectAttempts: 10,     // optional, default: 10
+  reconnectBackoffBase: 1000,   // optional, default: 1000ms
+  reconnectBackoffMax: 30000,   // optional, default: 30000ms
+  reconnectJitter: 0.2,         // optional, default: 0.2 (±20%)
+  connectionTimeout: 30000,     // optional, default: 30000ms
 
-// Query service by FQN
-const query = await client.discovery.queryService('alice', 'com.example.chat@1.0.0');
-// { uuid: 'abc123', allowed: true }
+  // Message queuing
+  maxQueueSize: 1000,           // optional, default: 1000
+  maxMessageAge: 60000,         // optional, default: 60000ms
 
-// Get service details by UUID
-const details = await client.discovery.getServiceDetails('abc123');
-// { serviceId, username, serviceFqn, offerId, sdp, isPublic, metadata, ... }
-
-// Connect to service by UUID
-const peer = await client.discovery.connectToService('abc123', {
-  rtcConfig: { ... },           // optional
-  onConnected: () => { ... },   // optional
-  onData: (data) => { ... }     // optional
-});
-
-// Connect by username + FQN (convenience method)
-const { peer, channel } = await client.discovery.connect(
-  'alice',
-  'com.example.chat@1.0.0',
-  { rtcConfig: { ... } }  // optional
-);
-
-// Connect by UUID with channel
-const { peer, channel } = await client.discovery.connectByUuid('abc123');
-```
-
-### Low-Level Peer Connection
-
-```typescript
-// Create peer connection
-const peer = client.createPeer({
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    {
-      urls: 'turn:turn.example.com:3478',
-      username: 'user',
-      credential: 'pass'
-    }
-  ],
-  iceTransportPolicy: 'relay'  // optional: force TURN relay
-});
-
-// Event listeners
-peer.on('state', (state) => {
-  console.log('Peer state:', state);
-});
-
-peer.on('connected', () => {
-  console.log('✅ Connected');
-});
-
-peer.on('disconnected', () => {
-  console.log('🔌 Disconnected');
-});
-
-peer.on('failed', (error) => {
-  console.error('❌ Failed:', error);
-});
-
-peer.on('datachannel', (channel) => {
-  console.log('📡 Data channel ready');
-});
-
-peer.on('track', (event) => {
-  // Media track received
-  const stream = event.streams[0];
-  videoElement.srcObject = stream;
-});
-
-// Create offer
-const offerId = await peer.createOffer({
-  ttl: 300000,  // optional
-  timeouts: {   // optional
-    iceGathering: 10000,
-    waitingForAnswer: 30000,
-    creatingAnswer: 10000,
-    iceConnection: 30000
+  // WebRTC configuration
+  rtcConfig: {
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' }
+    ]
   }
 });
 
-// Answer offer
-await peer.answer(offerId, sdp);
-
-// Add media tracks
-const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-stream.getTracks().forEach(track => {
-  peer.addTrack(track, stream);
+// Connect by UUID
+const connection2 = await client.connectByUuid('service-uuid-here', {
+  maxReconnectAttempts: 5
 });
+
+// Create channels before connecting
+const channel = connection.createChannel('main');
+const fileChannel = connection.createChannel('files', {
+  ordered: false,
+  maxRetransmits: 3
+});
+
+// Get existing channel
+const existingChannel = connection.getChannel('main');
+
+// Check connection state
+const state = connection.getState();
+// 'connecting' | 'connected' | 'reconnecting' | 'disconnected' | 'failed' | 'closed'
+
+const isConnected = connection.isConnected();
+
+// Connect
+await connection.connect();
 
 // Close connection
-await peer.close();
-
-// Properties
-peer.stateName;        // 'idle', 'creating-offer', 'connected', etc.
-peer.connectionState;  // RTCPeerConnectionState
-peer.offerId;          // string | undefined
-peer.role;             // 'offerer' | 'answerer' | undefined
+await connection.close();
 ```
 
-## Connection Lifecycle
+**Connection Events:**
+```typescript
+connection.on('state', (newState, previousState) => {
+  console.log(`State: ${previousState} → ${newState}`);
+});
 
-### Service Publisher (Offerer)
-1. **idle** - Initial state
-2. **creating-offer** - Creating WebRTC offer
-3. **waiting-for-answer** - Polling for answer from peer
-4. **exchanging-ice** - Exchanging ICE candidates
-5. **connected** - Successfully connected
-6. **failed** - Connection failed
-7. **closed** - Connection closed
+connection.on('connected', () => {
+  console.log('Connected');
+});
 
-### Service Consumer (Answerer)
-1. **idle** - Initial state
-2. **answering** - Creating WebRTC answer
-3. **exchanging-ice** - Exchanging ICE candidates
-4. **connected** - Successfully connected
-5. **failed** - Connection failed
-6. **closed** - Connection closed
+connection.on('reconnecting', (attempt, maxAttempts, delay) => {
+  console.log(`Reconnecting (${attempt}/${maxAttempts}) in ${delay}ms`);
+});
+
+connection.on('disconnected', () => {
+  console.log('Disconnected');
+});
+
+connection.on('failed', (error, permanent) => {
+  console.error('Connection failed:', error, 'Permanent:', permanent);
+});
+
+connection.on('closed', () => {
+  console.log('Connection closed');
+});
+```
+
+### Durable Channel API
+
+```typescript
+const channel = connection.createChannel('chat', {
+  ordered: true,          // optional, default: true
+  maxRetransmits: undefined  // optional, for unordered channels
+});
+
+// Send data (queued if disconnected)
+channel.send('Hello!');
+channel.send(new ArrayBuffer(1024));
+channel.send(new Blob(['data']));
+
+// Check state
+const state = channel.readyState;
+// 'connecting' | 'open' | 'closing' | 'closed'
+
+// Get buffered amount
+const buffered = channel.bufferedAmount;
+
+// Set buffered amount low threshold
+channel.bufferedAmountLowThreshold = 16 * 1024; // 16KB
+
+// Get queue size (for debugging)
+const queueSize = channel.getQueueSize();
+
+// Close channel
+channel.close();
+```
+
+**Channel Events:**
+```typescript
+channel.on('open', () => {
+  console.log('Channel open');
+});
+
+channel.on('message', (data) => {
+  console.log('Received:', data);
+});
+
+channel.on('error', (error) => {
+  console.error('Channel error:', error);
+});
+
+channel.on('close', () => {
+  console.log('Channel closed');
+});
+
+channel.on('bufferedAmountLow', () => {
+  console.log('Buffer drained, safe to send more');
+});
+
+channel.on('queueOverflow', (droppedCount) => {
+  console.warn(`Queue overflow: ${droppedCount} messages dropped`);
+});
+```
+
+## Configuration Options
+
+### Connection Configuration
+
+```typescript
+interface DurableConnectionConfig {
+  maxReconnectAttempts?: number;      // default: 10
+  reconnectBackoffBase?: number;      // default: 1000 (1 second)
+  reconnectBackoffMax?: number;       // default: 30000 (30 seconds)
+  reconnectJitter?: number;           // default: 0.2 (±20%)
+  connectionTimeout?: number;         // default: 30000 (30 seconds)
+  maxQueueSize?: number;              // default: 1000 messages
+  maxMessageAge?: number;             // default: 60000 (1 minute)
+  rtcConfig?: RTCConfiguration;
+}
+```
+
+### Service Configuration
+
+```typescript
+interface DurableServiceConfig extends DurableConnectionConfig {
+  username: string;
+  privateKey: string;
+  serviceFqn: string;
+  isPublic?: boolean;                 // default: false
+  metadata?: Record<string, any>;
+  ttl?: number;                       // default: 300000 (5 minutes)
+  ttlRefreshMargin?: number;          // default: 0.2 (refresh at 80%)
+  poolSize?: number;                  // default: 1
+  pollingInterval?: number;           // default: 2000 (2 seconds)
+}
+```
+
+## Examples
+
+### Chat Application
+
+```typescript
+// Server
+const client = new Rondevu();
+await client.register();
+
+const claim = await client.usernames.claimUsername('alice');
+client.usernames.saveKeypairToStorage('alice', claim.publicKey, claim.privateKey);
+const keypair = client.usernames.loadKeypairFromStorage('alice');
+
+const service = await client.exposeService({
+  username: 'alice',
+  privateKey: keypair.privateKey,
+  serviceFqn: 'chat@1.0.0',
+  isPublic: true,
+  poolSize: 50,  // Handle 50 concurrent users
+  handler: (channel, connectionId) => {
+    console.log(`User ${connectionId} joined`);
+
+    channel.on('message', (data) => {
+      console.log(`[${connectionId}]: ${data}`);
+      // Broadcast to all users (implement your broadcast logic)
+    });
+
+    channel.on('close', () => {
+      console.log(`User ${connectionId} left`);
+    });
+  }
+});
+
+await service.start();
+
+// Client
+const client2 = new Rondevu();
+await client2.register();
+
+const connection = await client2.connect('alice', 'chat@1.0.0');
+const channel = connection.createChannel('chat');
+
+channel.on('message', (data) => {
+  console.log('Message:', data);
+});
+
+await connection.connect();
+channel.send('Hello everyone!');
+```
+
+### File Transfer with Progress
+
+```typescript
+// Server
+const service = await client.exposeService({
+  username: 'alice',
+  privateKey: keypair.privateKey,
+  serviceFqn: 'files@1.0.0',
+  handler: (channel, connectionId) => {
+    channel.on('message', async (data) => {
+      const request = JSON.parse(data);
+
+      if (request.action === 'download') {
+        const file = await fs.readFile(request.path);
+        const chunkSize = 16 * 1024; // 16KB chunks
+
+        for (let i = 0; i < file.byteLength; i += chunkSize) {
+          const chunk = file.slice(i, i + chunkSize);
+          channel.send(chunk);
+
+          // Wait for buffer to drain if needed
+          while (channel.bufferedAmount > 16 * 1024 * 1024) { // 16MB
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+        }
+
+        channel.send(JSON.stringify({ done: true }));
+      }
+    });
+  }
+});
+
+await service.start();
+
+// Client
+const connection = await client.connect('alice', 'files@1.0.0');
+const channel = connection.createChannel('files');
+
+const chunks = [];
+channel.on('message', (data) => {
+  if (typeof data === 'string') {
+    const msg = JSON.parse(data);
+    if (msg.done) {
+      const blob = new Blob(chunks);
+      console.log('Download complete:', blob.size, 'bytes');
+    }
+  } else {
+    chunks.push(data);
+    console.log('Progress:', chunks.length * 16 * 1024, 'bytes');
+  }
+});
+
+await connection.connect();
+channel.send(JSON.stringify({ action: 'download', path: '/file.zip' }));
+```
 
 ## Platform-Specific Setup
 
@@ -508,185 +616,43 @@ const client = new Rondevu({
 });
 ```
 
-### Deno
-```typescript
-import { Rondevu } from 'npm:@xtr-dev/rondevu-client';
-
-const client = new Rondevu({
-  baseUrl: 'https://api.ronde.vu'
-});
-```
-
-### Bun
-Works out of the box - no additional setup needed.
-
-### Cloudflare Workers
-```typescript
-import { Rondevu } from '@xtr-dev/rondevu-client';
-
-export default {
-  async fetch(request: Request, env: Env) {
-    const client = new Rondevu({
-      baseUrl: 'https://api.ronde.vu'
-    });
-
-    const creds = await client.register();
-    return new Response(JSON.stringify(creds));
-  }
-};
-```
-
-## Examples
-
-### Echo Service
-
-```typescript
-// Publisher
-const client1 = new Rondevu();
-await client1.register();
-
-const claim = await client1.usernames.claimUsername('alice');
-client1.usernames.saveKeypairToStorage('alice', claim.publicKey, claim.privateKey);
-
-const keypair = client1.usernames.loadKeypairFromStorage('alice');
-
-await client1.services.exposeService({
-  username: 'alice',
-  privateKey: keypair.privateKey,
-  serviceFqn: 'com.example.echo@1.0.0',
-  isPublic: true,
-  handler: (channel, peer) => {
-    channel.onmessage = (e) => {
-      console.log('Received:', e.data);
-      channel.send(`Echo: ${e.data}`);
-    };
-  }
-});
-
-// Consumer
-const client2 = new Rondevu();
-await client2.register();
-
-const { peer, channel } = await client2.discovery.connect(
-  'alice',
-  'com.example.echo@1.0.0'
-);
-
-channel.onmessage = (e) => console.log('Received:', e.data);
-channel.send('Hello!');
-```
-
-### File Transfer Service
-
-```typescript
-// Publisher
-await client.services.exposeService({
-  username: 'alice',
-  privateKey: keypair.privateKey,
-  serviceFqn: 'com.example.files@1.0.0',
-  isPublic: false,
-  handler: (channel, peer) => {
-    channel.binaryType = 'arraybuffer';
-
-    channel.onmessage = (e) => {
-      if (typeof e.data === 'string') {
-        console.log('Request:', JSON.parse(e.data));
-      } else {
-        console.log('Received file chunk:', e.data.byteLength, 'bytes');
-      }
-    };
-  }
-});
-
-// Consumer
-const { peer, channel } = await client.discovery.connect(
-  'alice',
-  'com.example.files@1.0.0'
-);
-
-channel.binaryType = 'arraybuffer';
-
-// Request file
-channel.send(JSON.stringify({ action: 'get', path: '/readme.txt' }));
-
-channel.onmessage = (e) => {
-  if (e.data instanceof ArrayBuffer) {
-    console.log('Received file:', e.data.byteLength, 'bytes');
-  }
-};
-```
-
-### Video Chat Service
-
-```typescript
-// Publisher
-const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-
-const peer = client.createPeer();
-stream.getTracks().forEach(track => peer.addTrack(track, stream));
-
-const offerId = await peer.createOffer({ ttl: 300000 });
-
-await client.services.publishService({
-  username: 'alice',
-  privateKey: keypair.privateKey,
-  serviceFqn: 'com.example.videochat@1.0.0',
-  isPublic: true
-});
-
-// Consumer
-const { peer, channel } = await client.discovery.connect(
-  'alice',
-  'com.example.videochat@1.0.0'
-);
-
-peer.on('track', (event) => {
-  const remoteStream = event.streams[0];
-  videoElement.srcObject = remoteStream;
-});
-```
-
 ## TypeScript
 
 All types are exported:
 
 ```typescript
 import type {
+  // Client types
   Credentials,
   RondevuOptions,
 
   // Username types
   UsernameCheckResult,
   UsernameClaimResult,
-  Keypair,
 
-  // Service types
-  ServicePublishResult,
-  PublishServiceOptions,
-  ServiceHandle,
-
-  // Discovery types
-  ServiceInfo,
-  ServiceListResult,
-  ServiceQueryResult,
-  ServiceDetails,
-  ConnectResult,
-
-  // Peer types
-  PeerOptions,
-  PeerEvents,
-  PeerTimeouts
+  // Durable connection types
+  DurableConnectionState,
+  DurableChannelState,
+  DurableConnectionConfig,
+  DurableChannelConfig,
+  DurableServiceConfig,
+  QueuedMessage,
+  DurableConnectionEvents,
+  DurableChannelEvents,
+  DurableServiceEvents,
+  ConnectionInfo,
+  ServiceInfo
 } from '@xtr-dev/rondevu-client';
 ```
 
-## Migration from V1
+## Migration from v0.8.x
 
-V2 is a **breaking change** that replaces topic-based discovery with username claiming and service publishing. See the main [MIGRATION.md](../MIGRATION.md) for detailed migration guide.
+v0.9.0 is a **breaking change** that replaces the low-level APIs with high-level durable connections. See [MIGRATION.md](./MIGRATION.md) for detailed migration guide.
 
 **Key Changes:**
-- ❌ Removed: `offers.findByTopic()`, `offers.getTopics()`, bloom filters
-- ✅ Added: `usernames.*`, `services.*`, `discovery.*` APIs
-- ✅ Changed: Focus on service-based discovery instead of topics
+- ❌ Removed: `client.services.*`, `client.discovery.*`, `client.createPeer()` (low-level APIs)
+- ✅ Added: `client.exposeService()`, `client.connect()`, `client.connectByUuid()` (durable APIs)
+- ✅ Changed: Focus on durable connections with automatic reconnection and message queuing
 
 ## License
 
