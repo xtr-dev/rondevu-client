@@ -417,6 +417,25 @@ export class ServicePool {
       const createdOffers = await this.offersApi.create(offerRequests);
       offers.push(...createdOffers);
 
+      // Set up ICE candidate handlers AFTER we have offer IDs
+      for (let i = 0; i < peerConnections.length; i++) {
+        const pc = peerConnections[i];
+        const offerId = createdOffers[i].id;
+
+        pc.onicecandidate = async (event) => {
+          if (event.candidate) {
+            const candidateData = event.candidate.toJSON();
+            if (candidateData.candidate && candidateData.candidate !== '') {
+              try {
+                await this.offersApi.addIceCandidates(offerId, [candidateData]);
+              } catch (err) {
+                console.error('Error sending ICE candidate:', err);
+              }
+            }
+          }
+        };
+      }
+
     } catch (error) {
       // Close any created peer connections on error
       peerConnections.forEach(pc => pc.close());
@@ -492,6 +511,20 @@ export class ServicePool {
     }
 
     const data = await response.json();
+
+    // Set up ICE candidate handler now that we have the offer ID
+    pc.onicecandidate = async (event) => {
+      if (event.candidate) {
+        const candidateData = event.candidate.toJSON();
+        if (candidateData.candidate && candidateData.candidate !== '') {
+          try {
+            await this.offersApi.addIceCandidates(data.offerId, [candidateData]);
+          } catch (err) {
+            console.error('Error sending ICE candidate:', err);
+          }
+        }
+      }
+    };
 
     return {
       serviceId: data.serviceId,
