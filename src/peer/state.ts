@@ -40,12 +40,19 @@ export abstract class PeerState {
       if (event.candidate && this.peer.offerId) {
         const candidateData = event.candidate.toJSON();
         if (candidateData.candidate && candidateData.candidate !== '') {
+          const type = candidateData.candidate.includes('typ host') ? 'host' :
+                       candidateData.candidate.includes('typ srflx') ? 'srflx' :
+                       candidateData.candidate.includes('typ relay') ? 'relay' : 'unknown';
+          console.log(`🧊 Generated ${type} ICE candidate:`, candidateData.candidate);
           try {
             await this.peer.offersApi.addIceCandidates(this.peer.offerId, [candidateData]);
+            console.log(`✅ Sent ${type} ICE candidate to server`);
           } catch (err) {
-            console.error('Error sending ICE candidate:', err);
+            console.error(`❌ Error sending ${type} ICE candidate:`, err);
           }
         }
+      } else if (!event.candidate) {
+        console.log('🧊 ICE gathering complete (null candidate)');
       }
     };
     this.peer.pc.addEventListener('icecandidate', this.iceCandidateHandler);

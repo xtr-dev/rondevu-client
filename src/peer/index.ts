@@ -105,24 +105,41 @@ export default class RondevuPeer extends EventEmitter<PeerEvents> {
    */
   private setupPeerConnection(): void {
     this.connectionStateChangeHandler = () => {
+      console.log(`🔌 Connection state changed: ${this.pc.connectionState}`);
       switch (this.pc.connectionState) {
         case 'connected':
+          console.log('✅ WebRTC connection established');
           this.setState(new ConnectedState(this));
           this.emitEvent('connected');
           break;
         case 'disconnected':
+          console.log('⚠️ WebRTC connection disconnected');
           this.emitEvent('disconnected');
           break;
         case 'failed':
+          console.log('❌ WebRTC connection failed');
           this.setState(new FailedState(this, new Error('Connection failed')));
           break;
         case 'closed':
+          console.log('🔒 WebRTC connection closed');
           this.setState(new ClosedState(this));
           this.emitEvent('disconnected');
           break;
       }
     };
     this.pc.addEventListener('connectionstatechange', this.connectionStateChangeHandler);
+
+    // Add ICE connection state logging
+    const iceConnectionStateHandler = () => {
+      console.log(`🧊 ICE connection state: ${this.pc.iceConnectionState}`);
+    };
+    this.pc.addEventListener('iceconnectionstatechange', iceConnectionStateHandler);
+
+    // Add ICE gathering state logging
+    const iceGatheringStateHandler = () => {
+      console.log(`🔍 ICE gathering state: ${this.pc.iceGatheringState}`);
+    };
+    this.pc.addEventListener('icegatheringstatechange', iceGatheringStateHandler);
 
     this.dataChannelHandler = (event: RTCDataChannelEvent) => {
       this.emitEvent('datachannel', event.channel);
@@ -135,7 +152,13 @@ export default class RondevuPeer extends EventEmitter<PeerEvents> {
     this.pc.addEventListener('track', this.trackHandler);
 
     this.iceCandidateErrorHandler = (event: Event) => {
-      console.error('ICE candidate error:', event);
+      const iceError = event as RTCPeerConnectionIceErrorEvent;
+      console.error(`❌ ICE candidate error: ${iceError.errorText || 'Unknown error'}`, {
+        errorCode: iceError.errorCode,
+        url: iceError.url,
+        address: iceError.address,
+        port: iceError.port
+      });
     };
     this.pc.addEventListener('icecandidateerror', this.iceCandidateErrorHandler);
   }

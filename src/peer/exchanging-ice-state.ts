@@ -40,13 +40,22 @@ export class ExchangingIceState extends PeerState {
           this.lastIceTimestamp
         );
 
+        if (candidates.length > 0) {
+          console.log(`📥 Received ${candidates.length} remote ICE candidate(s)`);
+        }
+
         for (const cand of candidates) {
           if (cand.candidate && cand.candidate.candidate && cand.candidate.candidate !== '') {
+            const type = cand.candidate.candidate.includes('typ host') ? 'host' :
+                         cand.candidate.candidate.includes('typ srflx') ? 'srflx' :
+                         cand.candidate.candidate.includes('typ relay') ? 'relay' : 'unknown';
+            console.log(`🧊 Adding remote ${type} ICE candidate:`, cand.candidate.candidate);
             try {
               await this.peer.pc.addIceCandidate(new this.peer.RTCIceCandidate(cand.candidate));
+              console.log(`✅ Added remote ${type} ICE candidate`);
               this.lastIceTimestamp = cand.createdAt;
             } catch (err) {
-              console.warn('Failed to add ICE candidate:', err);
+              console.warn(`⚠️ Failed to add remote ${type} ICE candidate:`, err);
               this.lastIceTimestamp = cand.createdAt;
             }
           } else {
@@ -54,7 +63,7 @@ export class ExchangingIceState extends PeerState {
           }
         }
       } catch (err) {
-        console.error('Error polling for ICE candidates:', err);
+        console.error('❌ Error polling for ICE candidates:', err);
         if (err instanceof Error && err.message.includes('not found')) {
           this.cleanup();
           const { FailedState } = await import('./failed-state.js');
