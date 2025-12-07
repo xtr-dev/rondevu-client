@@ -385,6 +385,8 @@ export class ServicePool {
     try {
       // Create peer connections and generate offers
       const offerRequests = [];
+      const pendingCandidates: RTCIceCandidateInit[][] = []; // Store candidates before we have offer IDs
+
       for (let i = 0; i < batchSize; i++) {
         const pc = new RTCPeerConnection(this.options.rtcConfig || {
           iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
@@ -394,9 +396,28 @@ export class ServicePool {
         const channel = pc.createDataChannel('rondevu-service');
         dataChannels.push(channel);
 
+        // Set up temporary candidate collector BEFORE setLocalDescription
+        const candidatesForThisOffer: RTCIceCandidateInit[] = [];
+        pendingCandidates.push(candidatesForThisOffer);
+
+        pc.onicecandidate = (event) => {
+          if (event.candidate) {
+            const candidateData = event.candidate.toJSON();
+            if (candidateData.candidate && candidateData.candidate !== '') {
+              const type = candidateData.candidate.includes('typ host') ? 'host' :
+                           candidateData.candidate.includes('typ srflx') ? 'srflx' :
+                           candidateData.candidate.includes('typ relay') ? 'relay' : 'unknown';
+              console.log(`🧊 Service pool generated ${type} ICE candidate:`, candidateData.candidate);
+              candidatesForThisOffer.push(candidateData);
+            }
+          } else {
+            console.log('🧊 Service pool ICE gathering complete');
+          }
+        };
+
         // Create offer
         const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
+        await pc.setLocalDescription(offer); // ICE gathering starts here, candidates go to collector
 
         if (!offer.sdp) {
           pc.close();
@@ -417,19 +438,37 @@ export class ServicePool {
       const createdOffers = await this.offersApi.create(offerRequests);
       offers.push(...createdOffers);
 
-      // Set up ICE candidate handlers AFTER we have offer IDs
+      // Now send all pending candidates and set up handlers for future ones
       for (let i = 0; i < peerConnections.length; i++) {
         const pc = peerConnections[i];
         const offerId = createdOffers[i].id;
+        const candidates = pendingCandidates[i];
 
+        // Send any candidates that were collected while waiting for offer ID
+        if (candidates.length > 0) {
+          console.log(`📤 Sending ${candidates.length} pending ICE candidate(s) for offer ${offerId}`);
+          try {
+            await this.offersApi.addIceCandidates(offerId, candidates);
+            console.log(`✅ Sent ${candidates.length} pending ICE candidate(s)`);
+          } catch (err) {
+            console.error('❌ Error sending pending ICE candidates:', err);
+          }
+        }
+
+        // Replace temporary handler with permanent one for any future candidates
         pc.onicecandidate = async (event) => {
           if (event.candidate) {
             const candidateData = event.candidate.toJSON();
             if (candidateData.candidate && candidateData.candidate !== '') {
+              const type = candidateData.candidate.includes('typ host') ? 'host' :
+                           candidateData.candidate.includes('typ srflx') ? 'srflx' :
+                           candidateData.candidate.includes('typ relay') ? 'relay' : 'unknown';
+              console.log(`🧊 Service pool generated late ${type} ICE candidate:`, candidateData.candidate);
               try {
                 await this.offersApi.addIceCandidates(offerId, [candidateData]);
+                console.log(`✅ Sent late ${type} ICE candidate`);
               } catch (err) {
-                console.error('Error sending ICE candidate:', err);
+                console.error(`❌ Error sending ${type} ICE candidate:`, err);
               }
             }
           }
@@ -468,9 +507,28 @@ export class ServicePool {
 
     const dataChannel = pc.createDataChannel('rondevu-service');
 
+    // Collect candidates before we have offer ID
+    const pendingCandidates: RTCIceCandidateInit[] = [];
+
+    // Set up temporary candidate collector BEFORE setLocalDescription
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        const candidateData = event.candidate.toJSON();
+        if (candidateData.candidate && candidateData.candidate !== '') {
+          const type = candidateData.candidate.includes('typ host') ? 'host' :
+                       candidateData.candidate.includes('typ srflx') ? 'srflx' :
+                       candidateData.candidate.includes('typ relay') ? 'relay' : 'unknown';
+          console.log(`🧊 Initial service generated ${type} ICE candidate:`, candidateData.candidate);
+          pendingCandidates.push(candidateData);
+        }
+      } else {
+        console.log('🧊 Initial service ICE gathering complete');
+      }
+    };
+
     // Create offer
     const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
+    await pc.setLocalDescription(offer); // ICE gathering starts here
 
     if (!offer.sdp) {
       pc.close();
@@ -512,15 +570,31 @@ export class ServicePool {
 
     const data = await response.json();
 
-    // Set up ICE candidate handler now that we have the offer ID
+    // Send any pending candidates
+    if (pendingCandidates.length > 0) {
+      console.log(`📤 Sending ${pendingCandidates.length} pending ICE candidate(s) for initial service`);
+      try {
+        await this.offersApi.addIceCandidates(data.offerId, pendingCandidates);
+        console.log(`✅ Sent ${pendingCandidates.length} pending ICE candidate(s)`);
+      } catch (err) {
+        console.error('❌ Error sending pending ICE candidates:', err);
+      }
+    }
+
+    // Set up handler for any future candidates
     pc.onicecandidate = async (event) => {
       if (event.candidate) {
         const candidateData = event.candidate.toJSON();
         if (candidateData.candidate && candidateData.candidate !== '') {
+          const type = candidateData.candidate.includes('typ host') ? 'host' :
+                       candidateData.candidate.includes('typ srflx') ? 'srflx' :
+                       candidateData.candidate.includes('typ relay') ? 'relay' : 'unknown';
+          console.log(`🧊 Initial service generated late ${type} ICE candidate:`, candidateData.candidate);
           try {
             await this.offersApi.addIceCandidates(data.offerId, [candidateData]);
+            console.log(`✅ Sent late ${type} ICE candidate`);
           } catch (err) {
-            console.error('Error sending ICE candidate:', err);
+            console.error(`❌ Error sending ${type} ICE candidate:`, err);
           }
         }
       }
