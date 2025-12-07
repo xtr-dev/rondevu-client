@@ -87,18 +87,4 @@ export class EventBus<TEvents extends Record<string, any>> {
       this.handlers.clear();
     }
   }
-
-  /**
-   * Get count of handlers for an event
-   */
-  listenerCount<K extends keyof TEvents>(event: K): number {
-    return this.handlers.get(event)?.size ?? 0;
-  }
-
-  /**
-   * Get all event names that have handlers
-   */
-  eventNames(): Array<keyof TEvents> {
-    return Array.from(this.handlers.keys());
-  }
 }
