@@ -9,7 +9,7 @@ export interface RondevuServiceOptions {
 
 export interface PublishServiceOptions {
     serviceFqn: string
-    sdp: string
+    offers: Array<{ sdp: string }>
     ttl?: number
     isPublic?: boolean
     metadata?: Record<string, any>
@@ -39,7 +39,7 @@ export interface PublishServiceOptions {
  * // Publish a service
  * const publishedService = await service.publishService({
  *   serviceFqn: 'chat.app@1.0.0',
- *   sdp: offerSdp,
+ *   offers: [{ sdp: offerSdp }],
  *   ttl: 300000,
  *   isPublic: true,
  * })
@@ -69,7 +69,7 @@ export class RondevuService {
         // Register with API if no credentials provided
         if (!this.api['credentials']) {
             const credentials = await this.api.register()
-            ;(this.api as any).credentials = credentials
+            this.api.setCredentials(credentials)
         }
     }
 
@@ -94,7 +94,7 @@ export class RondevuService {
         }
 
         // Generate signature for username claim
-        const message = `claim-username-${this.username}-${Date.now()}`
+        const message = `claim:${this.username}:${Date.now()}`
         const signature = await RondevuAPI.signMessage(message, this.keypair.privateKey)
 
         // Claim the username
@@ -116,17 +116,17 @@ export class RondevuService {
             )
         }
 
-        const { serviceFqn, sdp, ttl, isPublic, metadata } = options
+        const { serviceFqn, offers, ttl, isPublic, metadata } = options
 
         // Generate signature for service publication
-        const message = `publish-${this.username}-${serviceFqn}-${Date.now()}`
+        const message = `publish:${this.username}:${serviceFqn}:${Date.now()}`
         const signature = await RondevuAPI.signMessage(message, this.keypair.privateKey)
 
         // Create service request
         const serviceRequest: ServiceRequest = {
             username: this.username,
             serviceFqn,
-            sdp,
+            offers,
             signature,
             message,
             ttl,
@@ -143,6 +143,13 @@ export class RondevuService {
      */
     getKeypair(): Keypair | null {
         return this.keypair
+    }
+
+    /**
+     * Get the username
+     */
+    getUsername(): string {
+        return this.username
     }
 
     /**

@@ -12,10 +12,9 @@ import { createBin } from './bin.js'
 import { WebRTCContext } from './webrtc-context'
 
 export type WebRTCRondevuConnectionOptions = {
-    id: string
-    service: string
-    offer: RTCSessionDescriptionInit | null
+    offer?: RTCSessionDescriptionInit | null
     context: WebRTCContext
+    signaler: Signaler
 }
 
 /**
@@ -63,41 +62,39 @@ export type WebRTCRondevuConnectionOptions = {
  * });
  * ```
  */
-export class WebRTCRondevuConnection implements ConnectionInterface {
+export class RTCDurableConnection implements ConnectionInterface {
     private readonly side: 'offer' | 'answer'
     public readonly expiresAt: number = 0
     public readonly lastActive: number = 0
     public readonly events: EventBus<ConnectionEvents> = new EventBus()
     public readonly ready: Promise<void>
     private iceBin = createBin()
-    private ctx: WebRTCContext
+    private context: WebRTCContext
+    private readonly signaler: Signaler
     private _conn: RTCPeerConnection | null = null
     private _state: ConnectionInterface['state'] = 'disconnected'
+    private _dataChannel: RTCDataChannel | null = null
+    private messageQueue: Array<{
+        message: Message
+        options: QueueMessageOptions
+        timestamp: number
+    }> = []
 
-    constructor({ context: ctx, offer }: WebRTCRondevuConnectionOptions) {
-        this.ctx = ctx
-        this._conn = ctx.createPeerConnection()
+    constructor({ context, offer, signaler }: WebRTCRondevuConnectionOptions) {
+        this.context = context
+        this.signaler = signaler
+        this._conn = context.createPeerConnection()
         this.side = offer ? 'answer' : 'offer'
 
         // setup data channel
         if (offer) {
             this._conn.addEventListener('datachannel', e => {
-                const channel = e.channel
-                channel.addEventListener('message', e => {
-                    console.log('Message from peer:', e)
-                })
-                channel.addEventListener('open', () => {
-                    channel.send('I am ' + this.side)
-                })
+                this._dataChannel = e.channel
+                this.setupDataChannelListeners(this._dataChannel)
             })
         } else {
-            const channel = this._conn.createDataChannel('vu.ronde.protocol')
-            channel.addEventListener('message', e => {
-                console.log('Message from peer:', e)
-            })
-            channel.addEventListener('open', () => {
-                channel.send('I am ' + this.side)
-            })
+            this._dataChannel = this._conn.createDataChannel('vu.ronde.protocol')
+            this.setupDataChannelListeners(this._dataChannel)
         }
 
         // setup description exchange
@@ -108,12 +105,12 @@ export class WebRTCRondevuConnection implements ConnectionInterface {
                   .then(async answer => {
                       if (!answer || !this._conn) throw new Error('Connection disappeared')
                       await this._conn.setLocalDescription(answer)
-                      return await ctx.signaler.setAnswer(answer)
+                      return await signaler.setAnswer(answer)
                   })
             : this._conn.createOffer().then(async offer => {
                   if (!this._conn) throw new Error('Connection disappeared')
                   await this._conn.setLocalDescription(offer)
-                  return await ctx.signaler.setOffer(offer)
+                  return await signaler.setOffer(offer)
               })
 
         // propagate connection state changes
@@ -161,12 +158,12 @@ export class WebRTCRondevuConnection implements ConnectionInterface {
      */
     private startIce() {
         const listener = ({ candidate }: { candidate: RTCIceCandidate | null }) => {
-            if (candidate) this.ctx.signaler.addIceCandidate(candidate)
+            if (candidate) this.signaler.addIceCandidate(candidate)
         }
         if (!this._conn) throw new Error('Connection disappeared')
         this._conn.addEventListener('icecandidate', listener)
         this.iceBin(
-            this.ctx.signaler.addListener((candidate: RTCIceCandidate) =>
+            this.signaler.addListener((candidate: RTCIceCandidate) =>
                 this._conn?.addIceCandidate(candidate)
             ),
             () => this._conn?.removeEventListener('icecandidate', listener)
@@ -202,14 +199,67 @@ export class WebRTCRondevuConnection implements ConnectionInterface {
     }
 
     /**
+     * Setup data channel event listeners
+     */
+    private setupDataChannelListeners(channel: RTCDataChannel): void {
+        channel.addEventListener('message', e => {
+            this.events.emit('message', e.data)
+        })
+
+        channel.addEventListener('open', () => {
+            // Channel opened - flush queued messages
+            this.flushQueue().catch(err => {
+                console.error('Failed to flush message queue:', err)
+            })
+        })
+
+        channel.addEventListener('error', err => {
+            console.error('Data channel error:', err)
+        })
+
+        channel.addEventListener('close', () => {
+            console.log('Data channel closed')
+        })
+    }
+
+    /**
+     * Flush the message queue
+     */
+    private async flushQueue(): Promise<void> {
+        while (this.messageQueue.length > 0 && this._state === 'connected') {
+            const item = this.messageQueue.shift()!
+
+            // Check expiration
+            if (item.options.expiresAt && Date.now() > item.options.expiresAt) {
+                continue
+            }
+
+            const success = await this.sendMessage(item.message)
+            if (!success) {
+                // Re-queue on failure
+                this.messageQueue.unshift(item)
+                break
+            }
+        }
+    }
+
+    /**
      * Queue a message for sending when connection is established
      *
      * @param message - Message to queue (string or ArrayBuffer)
      * @param options - Queue options (e.g., expiration time)
      */
-    queueMessage(message: Message, options: QueueMessageOptions = {}): Promise<void> {
-        // TODO: Implement message queuing
-        return Promise.resolve(undefined)
+    async queueMessage(message: Message, options: QueueMessageOptions = {}): Promise<void> {
+        this.messageQueue.push({
+            message,
+            options,
+            timestamp: Date.now()
+        })
+
+        // Try immediate send if connected
+        if (this._state === 'connected') {
+            await this.flushQueue()
+        }
     }
 
     /**
@@ -218,8 +268,23 @@ export class WebRTCRondevuConnection implements ConnectionInterface {
      * @param message - Message to send (string or ArrayBuffer)
      * @returns Promise resolving to true if sent successfully
      */
-    sendMessage(message: Message): Promise<boolean> {
-        // TODO: Implement message sending via data channel
-        return Promise.resolve(false)
+    async sendMessage(message: Message): Promise<boolean> {
+        if (this._state !== 'connected' || !this._dataChannel) {
+            return false
+        }
+
+        if (this._dataChannel.readyState !== 'open') {
+            return false
+        }
+
+        try {
+            // TypeScript has trouble with the union type, so we cast to any
+            // Both string and ArrayBuffer are valid for RTCDataChannel.send()
+            this._dataChannel.send(message as any)
+            return true
+        } catch (err) {
+            console.error('Send failed:', err)
+            return false
+        }
     }
 }

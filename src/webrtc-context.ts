@@ -30,7 +30,6 @@ const DEFAULT_RTC_CONFIGURATION: RTCConfiguration = {
 
 export class WebRTCContext {
     constructor(
-        public readonly signaler: Signaler,
         private readonly config?: RTCConfiguration
     ) {}
 

@@ -37,10 +37,14 @@ export interface Offer {
     answererPeerId?: string
 }
 
+export interface OfferRequest {
+    sdp: string
+}
+
 export interface ServiceRequest {
     username: string
     serviceFqn: string
-    sdp: string
+    offers: OfferRequest[]
     ttl?: number
     isPublic?: boolean
     metadata?: Record<string, any>
@@ -48,10 +52,17 @@ export interface ServiceRequest {
     message: string
 }
 
+export interface ServiceOffer {
+    offerId: string
+    sdp: string
+    createdAt: number
+    expiresAt: number
+}
+
 export interface Service {
     serviceId: string
     uuid: string
-    offerId: string
+    offers: ServiceOffer[]
     username: string
     serviceFqn: string
     isPublic: boolean
@@ -89,6 +100,13 @@ export class RondevuAPI {
         private baseUrl: string,
         private credentials?: Credentials
     ) {}
+
+    /**
+     * Set credentials for authentication
+     */
+    setCredentials(credentials: Credentials): void {
+        this.credentials = credentials
+    }
 
     /**
      * Authentication header
@@ -210,42 +228,45 @@ export class RondevuAPI {
     }
 
     /**
-     * Answer an offer
+     * Answer a service
      */
-    async answerOffer(offerId: string, sdp: string, secret?: string): Promise<void> {
-        const response = await fetch(`${this.baseUrl}/offers/${offerId}/answer`, {
+    async answerService(serviceUuid: string, sdp: string): Promise<{ offerId: string }> {
+        const response = await fetch(`${this.baseUrl}/services/${serviceUuid}/answer`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 ...this.getAuthHeader(),
             },
-            body: JSON.stringify({ sdp, secret }),
+            body: JSON.stringify({ sdp }),
         })
 
         if (!response.ok) {
             const error = await response.json().catch(() => ({ error: 'Unknown error' }))
-            throw new Error(`Failed to answer offer: ${error.error || response.statusText}`)
+            throw new Error(`Failed to answer service: ${error.error || response.statusText}`)
         }
+
+        return await response.json()
     }
 
     /**
-     * Get answer for an offer (offerer polls this)
+     * Get answer for a service (offerer polls this)
      */
-    async getAnswer(offerId: string): Promise<{ sdp: string } | null> {
-        const response = await fetch(`${this.baseUrl}/offers/${offerId}/answer`, {
+    async getServiceAnswer(serviceUuid: string): Promise<{ sdp: string; offerId: string } | null> {
+        const response = await fetch(`${this.baseUrl}/services/${serviceUuid}/answer`, {
             headers: this.getAuthHeader(),
         })
 
-        if (response.status === 404) {
-            return null // No answer yet
-        }
-
         if (!response.ok) {
+            // 404 means not yet answered
+            if (response.status === 404) {
+                return null
+            }
             const error = await response.json().catch(() => ({ error: 'Unknown error' }))
             throw new Error(`Failed to get answer: ${error.error || response.statusText}`)
         }
 
-        return await response.json()
+        const data = await response.json()
+        return { sdp: data.sdp, offerId: data.offerId }
     }
 
     /**
@@ -269,39 +290,48 @@ export class RondevuAPI {
     // ============================================
 
     /**
-     * Add ICE candidates to an offer
+     * Add ICE candidates to a service
      */
-    async addIceCandidates(offerId: string, candidates: RTCIceCandidateInit[]): Promise<void> {
-        const response = await fetch(`${this.baseUrl}/offers/${offerId}/ice-candidates`, {
+    async addServiceIceCandidates(serviceUuid: string, candidates: RTCIceCandidateInit[], offerId?: string): Promise<{ offerId: string }> {
+        const response = await fetch(`${this.baseUrl}/services/${serviceUuid}/ice-candidates`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 ...this.getAuthHeader(),
             },
-            body: JSON.stringify({ candidates }),
+            body: JSON.stringify({ candidates, offerId }),
         })
 
         if (!response.ok) {
             const error = await response.json().catch(() => ({ error: 'Unknown error' }))
             throw new Error(`Failed to add ICE candidates: ${error.error || response.statusText}`)
         }
+
+        return await response.json()
     }
 
     /**
-     * Get ICE candidates for an offer (with polling support)
+     * Get ICE candidates for a service (with polling support)
      */
-    async getIceCandidates(offerId: string, since: number = 0): Promise<IceCandidate[]> {
-        const response = await fetch(
-            `${this.baseUrl}/offers/${offerId}/ice-candidates?since=${since}`,
-            { headers: this.getAuthHeader() }
-        )
+    async getServiceIceCandidates(serviceUuid: string, since: number = 0, offerId?: string): Promise<{ candidates: IceCandidate[]; offerId: string }> {
+        const url = new URL(`${this.baseUrl}/services/${serviceUuid}/ice-candidates`)
+        url.searchParams.set('since', since.toString())
+        if (offerId) {
+            url.searchParams.set('offerId', offerId)
+        }
+
+        const response = await fetch(url.toString(), { headers: this.getAuthHeader() })
 
         if (!response.ok) {
             const error = await response.json().catch(() => ({ error: 'Unknown error' }))
             throw new Error(`Failed to get ICE candidates: ${error.error || response.statusText}`)
         }
 
-        return await response.json()
+        const data = await response.json()
+        return {
+            candidates: data.candidates || [],
+            offerId: data.offerId
+        }
     }
 
     // ============================================
@@ -312,7 +342,7 @@ export class RondevuAPI {
      * Publish a service
      */
     async publishService(service: ServiceRequest): Promise<Service> {
-        const response = await fetch(`${this.baseUrl}/services`, {
+        const response = await fetch(`${this.baseUrl}/users/${encodeURIComponent(service.username)}/services`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -346,11 +376,11 @@ export class RondevuAPI {
     }
 
     /**
-     * Search services by username
+     * Search services by username - lists all services for a username
      */
     async searchServicesByUsername(username: string): Promise<Service[]> {
         const response = await fetch(
-            `${this.baseUrl}/services?username=${encodeURIComponent(username)}`,
+            `${this.baseUrl}/users/${encodeURIComponent(username)}/services`,
             { headers: this.getAuthHeader() }
         )
 
@@ -359,41 +389,29 @@ export class RondevuAPI {
             throw new Error(`Failed to search services: ${error.error || response.statusText}`)
         }
 
-        return await response.json()
+        const data = await response.json()
+        return data.services || []
     }
 
     /**
-     * Search services by FQN
-     */
-    async searchServicesByFqn(serviceFqn: string): Promise<Service[]> {
-        const response = await fetch(
-            `${this.baseUrl}/services?serviceFqn=${encodeURIComponent(serviceFqn)}`,
-            { headers: this.getAuthHeader() }
-        )
-
-        if (!response.ok) {
-            const error = await response.json().catch(() => ({ error: 'Unknown error' }))
-            throw new Error(`Failed to search services: ${error.error || response.statusText}`)
-        }
-
-        return await response.json()
-    }
-
-    /**
-     * Search services by username AND FQN
+     * Search services by username AND FQN - returns full service details
      */
     async searchServices(username: string, serviceFqn: string): Promise<Service[]> {
         const response = await fetch(
-            `${this.baseUrl}/services?username=${encodeURIComponent(username)}&serviceFqn=${encodeURIComponent(serviceFqn)}`,
+            `${this.baseUrl}/users/${encodeURIComponent(username)}/services/${encodeURIComponent(serviceFqn)}`,
             { headers: this.getAuthHeader() }
         )
 
         if (!response.ok) {
+            if (response.status === 404) {
+                return []
+            }
             const error = await response.json().catch(() => ({ error: 'Unknown error' }))
             throw new Error(`Failed to search services: ${error.error || response.statusText}`)
         }
 
-        return await response.json()
+        const service = await response.json()
+        return [service]
     }
 
     // ============================================
@@ -405,7 +423,7 @@ export class RondevuAPI {
      */
     async checkUsername(username: string): Promise<{ available: boolean; owner?: string }> {
         const response = await fetch(
-            `${this.baseUrl}/usernames/${encodeURIComponent(username)}/check`
+            `${this.baseUrl}/users/${encodeURIComponent(username)}`
         )
 
         if (!response.ok) {
@@ -425,7 +443,7 @@ export class RondevuAPI {
         signature: string,
         message: string
     ): Promise<{ success: boolean; username: string }> {
-        const response = await fetch(`${this.baseUrl}/usernames/${encodeURIComponent(username)}`, {
+        const response = await fetch(`${this.baseUrl}/users/${encodeURIComponent(username)}`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',

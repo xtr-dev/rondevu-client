@@ -6,10 +6,11 @@
 export { EventBus } from './event-bus.js'
 export { RondevuAPI } from './api.js'
 export { RondevuService } from './rondevu-service.js'
-export { RondevuSignaler } from './signaler.js'
+export { RondevuSignaler } from './rondevu-signaler.js'
+export { WebRTCContext } from './webrtc-context.js'
+export { RTCDurableConnection } from './durable-connection'
 export { ServiceHost } from './service-host.js'
 export { ServiceClient } from './service-client.js'
-export { WebRTCRondevuConnection } from './connection.js'
 export { createBin } from './bin.js'
 
 // Export types
@@ -38,3 +39,6 @@ export type { RondevuServiceOptions, PublishServiceOptions } from './rondevu-ser
 export type { ServiceHostOptions, ServiceHostEvents } from './service-host.js'
 
 export type { ServiceClientOptions, ServiceClientEvents } from './service-client.js'
+
+export type { PollingConfig } from './rondevu-signaler.js'
+

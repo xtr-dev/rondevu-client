@@ -15,14 +15,16 @@ export interface ConnectionEvents {
     message: Message
 }
 
-export const ConnectionStates = ['connected', 'disconnected', 'connecting'] as const
+export const ConnectionStates = [
+    'connected',
+    'disconnected',
+    'connecting'
+] as const
 
 export const isConnectionState = (state: string): state is (typeof ConnectionStates)[number] =>
     ConnectionStates.includes(state as any)
 
 export interface ConnectionInterface {
-    id: string
-    service: string
     state: (typeof ConnectionStates)[number]
     lastActive: number
     expiresAt?: number
@@ -33,7 +35,7 @@ export interface ConnectionInterface {
 }
 
 export interface Signaler {
-    addIceCandidate(candidate: RTCIceCandidate): Promise<void> | void
+    addIceCandidate(candidate: RTCIceCandidate): Promise<void>
     addListener(callback: (candidate: RTCIceCandidate) => void): Binnable
     addOfferListener(callback: (offer: RTCSessionDescriptionInit) => void): Binnable
     addAnswerListener(callback: (answer: RTCSessionDescriptionInit) => void): Binnable
