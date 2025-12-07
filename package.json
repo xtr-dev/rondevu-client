@@ -1,6 +1,6 @@
 {
   "name": "@xtr-dev/rondevu-client",
-  "version": "0.9.2",
+  "version": "0.10.0",
   "description": "TypeScript client for Rondevu with durable WebRTC connections, automatic reconnection, and message queuing",
   "type": "module",
   "main": "dist/index.js",
@@ -8,6 +8,10 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
+    "dev": "vite",
+    "lint": "eslint src demo --ext .ts,.tsx,.js",
+    "lint:fix": "eslint src demo --ext .ts,.tsx,.js --fix",
+    "format": "prettier --write \"src/**/*.{ts,tsx,js}\" \"demo/**/*.{ts,tsx,js,html}\"",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
@@ -20,14 +24,23 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
-    "typescript": "^5.9.3"
+    "@eslint/js": "^9.39.1",
+    "@typescript-eslint/eslint-plugin": "^8.48.1",
+    "@typescript-eslint/parser": "^8.48.1",
+    "eslint": "^9.39.1",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-prettier": "^5.5.4",
+    "eslint-plugin-unicorn": "^62.0.0",
+    "globals": "^16.5.0",
+    "prettier": "^3.7.4",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.6"
   },
   "files": [
     "dist",
     "README.md"
   ],
   "dependencies": {
-    "@noble/ed25519": "^3.0.0",
-    "@xtr-dev/rondevu-client": "^0.9.2"
+    "@noble/ed25519": "^3.0.0"
   }
 }

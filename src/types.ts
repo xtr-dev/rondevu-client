@@ -1,34 +1,42 @@
 /**
  * Core connection types
  */
-import {EventBus} from "./event-bus";
-import {Binnable} from "./bin";
+import { EventBus } from './event-bus.js'
+import { Binnable } from './bin.js'
 
-export type Message = string | ArrayBuffer;
+export type Message = string | ArrayBuffer
 
 export interface QueueMessageOptions {
-    expiresAt?: number;
+    expiresAt?: number
 }
 
 export interface ConnectionEvents {
     'state-change': ConnectionInterface['state']
-    'message': Message;
+    message: Message
 }
 
-export interface ConnectionInterface {
-    id: string;
-    host: string;
-    service: string;
-    state: 'connected' | 'disconnected' | 'connecting';
-    lastActive: number;
-    expiresAt?: number;
-    events: EventBus<ConnectionEvents>;
+export const ConnectionStates = ['connected', 'disconnected', 'connecting'] as const
 
-    queueMessage(message: Message, options?: QueueMessageOptions): Promise<void>;
-    sendMessage(message: Message): Promise<boolean>;
+export const isConnectionState = (state: string): state is (typeof ConnectionStates)[number] =>
+    ConnectionStates.includes(state as any)
+
+export interface ConnectionInterface {
+    id: string
+    service: string
+    state: (typeof ConnectionStates)[number]
+    lastActive: number
+    expiresAt?: number
+    events: EventBus<ConnectionEvents>
+
+    queueMessage(message: Message, options?: QueueMessageOptions): Promise<void>
+    sendMessage(message: Message): Promise<boolean>
 }
 
 export interface Signaler {
-    addIceCandidate(candidate: RTCIceCandidate): Promise<void> | void;
-    addListener(callback: (candidate: RTCIceCandidate) => void): Binnable;
+    addIceCandidate(candidate: RTCIceCandidate): Promise<void> | void
+    addListener(callback: (candidate: RTCIceCandidate) => void): Binnable
+    addOfferListener(callback: (offer: RTCSessionDescriptionInit) => void): Binnable
+    addAnswerListener(callback: (answer: RTCSessionDescriptionInit) => void): Binnable
+    setOffer(offer: RTCSessionDescriptionInit): Promise<void>
+    setAnswer(answer: RTCSessionDescriptionInit): Promise<void>
 }
