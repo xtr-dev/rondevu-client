@@ -13,6 +13,7 @@ export interface ServiceClientOptions {
     autoReconnect?: boolean
     reconnectDelay?: number
     maxReconnectAttempts?: number
+    rtcConfiguration?: RTCConfiguration
 }
 
 export interface ServiceClientEvents {
@@ -59,6 +60,7 @@ export class ServiceClient {
     private readonly autoReconnect: boolean
     private readonly reconnectDelay: number
     private readonly maxReconnectAttempts: number
+    private readonly rtcConfiguration?: RTCConfiguration
     private connection: WebRTCRondevuConnection | null = null
     private reconnectAttempts = 0
     private reconnectTimeout: ReturnType<typeof setTimeout> | null = null
@@ -74,6 +76,7 @@ export class ServiceClient {
         this.autoReconnect = options.autoReconnect !== false
         this.reconnectDelay = options.reconnectDelay || 2000
         this.maxReconnectAttempts = options.maxReconnectAttempts || 5
+        this.rtcConfiguration = options.rtcConfiguration
     }
 
     /**
@@ -111,7 +114,7 @@ export class ServiceClient {
                 this.rondevuService.getAPI(),
                 serviceDetails.offerId
             )
-            const context = new WebRTCContext(signaler)
+            const context = new WebRTCContext(signaler, this.rtcConfiguration)
 
             // Create connection (answerer role)
             const conn = new WebRTCRondevuConnection({

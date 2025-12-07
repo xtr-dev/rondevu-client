@@ -14,6 +14,7 @@ export interface ServiceHostOptions {
     ttl?: number
     isPublic?: boolean
     metadata?: Record<string, any>
+    rtcConfiguration?: RTCConfiguration
 }
 
 export interface ServiceHostEvents {
@@ -62,6 +63,7 @@ export class ServiceHost {
     private readonly ttl: number
     private readonly isPublic: boolean
     private readonly metadata?: Record<string, any>
+    private readonly rtcConfiguration?: RTCConfiguration
     private readonly bin = createBin()
     private isStarted = false
 
@@ -74,6 +76,7 @@ export class ServiceHost {
         this.ttl = options.ttl || 300000
         this.isPublic = options.isPublic !== false
         this.metadata = options.metadata
+        this.rtcConfiguration = options.rtcConfiguration
     }
 
     /**
@@ -140,7 +143,7 @@ export class ServiceHost {
     private async createOffer(): Promise<void> {
         try {
             // Create temporary context with NoOp signaler
-            const tempContext = new WebRTCContext(new NoOpSignaler())
+            const tempContext = new WebRTCContext(new NoOpSignaler(), this.rtcConfiguration)
 
             // Create connection (offerer role)
             const conn = new WebRTCRondevuConnection({
