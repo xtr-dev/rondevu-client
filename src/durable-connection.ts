@@ -71,15 +71,11 @@ export class WebRTCRondevuConnection implements ConnectionInterface {
     public readonly ready: Promise<void>
     private iceBin = createBin()
     private ctx: WebRTCContext
-    public id: string
-    public service: string
     private _conn: RTCPeerConnection | null = null
     private _state: ConnectionInterface['state'] = 'disconnected'
 
-    constructor({ context: ctx, offer, id, service }: WebRTCRondevuConnectionOptions) {
+    constructor({ context: ctx, offer }: WebRTCRondevuConnectionOptions) {
         this.ctx = ctx
-        this.id = id
-        this.service = service
         this._conn = ctx.createPeerConnection()
         this.side = offer ? 'answer' : 'offer'
 
