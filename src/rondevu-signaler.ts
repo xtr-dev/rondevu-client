@@ -1,6 +1,5 @@
-import { Signaler } from './types.js'
-import { RondevuService } from './rondevu-service.js'
-import { Binnable } from './bin.js'
+import { Signaler, Binnable } from './types.js'
+import { Rondevu } from './rondevu.js'
 
 export interface PollingConfig {
     initialInterval?: number     // Default: 500ms
@@ -43,7 +42,7 @@ export interface PollingConfig {
  */
 export class RondevuSignaler implements Signaler {
     private offerId: string | null = null
-    private serviceUuid: string | null = null
+    private serviceFqn: string | null = null
     private offerListeners: Array<(offer: RTCSessionDescriptionInit) => void> = []
     private answerListeners: Array<(answer: RTCSessionDescriptionInit) => void> = []
     private iceListeners: Array<(candidate: RTCIceCandidate) => void> = []
@@ -54,7 +53,7 @@ export class RondevuSignaler implements Signaler {
     private pollingConfig: Required<PollingConfig>
 
     constructor(
-        private readonly rondevu: RondevuService,
+        private readonly rondevu: Rondevu,
         private readonly service: string,
         private readonly host?: string,
         pollingConfig?: PollingConfig
@@ -82,7 +81,6 @@ export class RondevuSignaler implements Signaler {
             serviceFqn: this.service,
             offers: [{ sdp: offer.sdp }],
             ttl: 300000, // 5 minutes
-            isPublic: true,
         })
 
         // Get the first offer from the published service
@@ -91,7 +89,7 @@ export class RondevuSignaler implements Signaler {
         }
 
         this.offerId = publishedService.offers[0].offerId
-        this.serviceUuid = publishedService.uuid
+        this.serviceFqn = publishedService.serviceFqn
 
         // Start polling for answer
         this.startAnswerPolling()
@@ -109,12 +107,12 @@ export class RondevuSignaler implements Signaler {
             throw new Error('Answer SDP is required')
         }
 
-        if (!this.serviceUuid) {
-            throw new Error('No service UUID available. Must receive offer first.')
+        if (!this.serviceFqn || !this.offerId) {
+            throw new Error('No service FQN or offer ID available. Must receive offer first.')
         }
 
         // Send answer to the service
-        const result = await this.rondevu.getAPI().answerService(this.serviceUuid, answer.sdp)
+        const result = await this.rondevu.getAPI().postOfferAnswer(this.serviceFqn, this.offerId, answer.sdp)
         this.offerId = result.offerId
 
         // Start polling for ICE candidates
@@ -162,8 +160,8 @@ export class RondevuSignaler implements Signaler {
      * Send an ICE candidate to the remote peer
      */
     async addIceCandidate(candidate: RTCIceCandidate): Promise<void> {
-        if (!this.serviceUuid) {
-            console.warn('Cannot send ICE candidate: no service UUID')
+        if (!this.serviceFqn || !this.offerId) {
+            console.warn('Cannot send ICE candidate: no service FQN or offer ID')
             return
         }
 
@@ -175,15 +173,11 @@ export class RondevuSignaler implements Signaler {
         }
 
         try {
-            const result = await this.rondevu.getAPI().addServiceIceCandidates(
-                this.serviceUuid,
-                [candidateData],
-                this.offerId || undefined
+            await this.rondevu.getAPI().addOfferIceCandidates(
+                this.serviceFqn,
+                this.offerId,
+                [candidateData]
             )
-            // Store offerId if we didn't have it yet
-            if (!this.offerId) {
-                this.offerId = result.offerId
-            }
         } catch (err) {
             console.error('Failed to send ICE candidate:', err)
         }
@@ -216,33 +210,24 @@ export class RondevuSignaler implements Signaler {
         this.isPolling = true
 
         try {
-            // Search for services by username and service FQN
-            const services = await this.rondevu.getAPI().searchServices(this.host, this.service)
+            // Get service by FQN (service should include @username)
+            const serviceFqn = `${this.service}@${this.host}`
+            const serviceData = await this.rondevu.getAPI().getService(serviceFqn)
 
-            if (services.length === 0) {
-                console.warn(`No services found for ${this.host}/${this.service}`)
+            if (!serviceData) {
+                console.warn(`No service found for ${serviceFqn}`)
                 this.isPolling = false
                 return
             }
 
-            // Get the first available service (already has full details from searchServices)
-            const service = services[0] as any
-
-            // Get the first available offer from the service
-            if (!service.offers || service.offers.length === 0) {
-                console.warn(`No offers available for service ${this.host}/${this.service}`)
-                this.isPolling = false
-                return
-            }
-
-            const firstOffer = service.offers[0]
-            this.offerId = firstOffer.offerId
-            this.serviceUuid = service.uuid
+            // Store service details
+            this.offerId = serviceData.offerId
+            this.serviceFqn = serviceData.serviceFqn
 
             // Notify offer listeners
             const offer: RTCSessionDescriptionInit = {
                 type: 'offer',
-                sdp: firstOffer.sdp,
+                sdp: serviceData.sdp,
             }
 
             this.offerListeners.forEach(listener => {
@@ -262,7 +247,7 @@ export class RondevuSignaler implements Signaler {
      * Start polling for answer (offerer side) with exponential backoff
      */
     private startAnswerPolling(): void {
-        if (this.answerPollingTimeout || !this.serviceUuid) {
+        if (this.answerPollingTimeout || !this.serviceFqn || !this.offerId) {
             return
         }
 
@@ -270,13 +255,13 @@ export class RondevuSignaler implements Signaler {
         let retries = 0
 
         const poll = async () => {
-            if (!this.serviceUuid) {
+            if (!this.serviceFqn || !this.offerId) {
                 this.stopAnswerPolling()
                 return
             }
 
             try {
-                const answer = await this.rondevu.getAPI().getServiceAnswer(this.serviceUuid)
+                const answer = await this.rondevu.getAPI().getOfferAnswer(this.serviceFqn, this.offerId)
 
                 if (answer && answer.sdp) {
                     // Store offerId if we didn't have it yet
@@ -354,14 +339,14 @@ export class RondevuSignaler implements Signaler {
      * Start polling for ICE candidates with adaptive backoff
      */
     private startIcePolling(): void {
-        if (this.icePollingTimeout || !this.serviceUuid) {
+        if (this.icePollingTimeout || !this.serviceFqn || !this.offerId) {
             return
         }
 
         let interval = this.pollingConfig.initialInterval
 
         const poll = async () => {
-            if (!this.serviceUuid) {
+            if (!this.serviceFqn || !this.offerId) {
                 this.stopIcePolling()
                 return
             }
@@ -369,12 +354,7 @@ export class RondevuSignaler implements Signaler {
             try {
                 const result = await this.rondevu
                     .getAPI()
-                    .getServiceIceCandidates(this.serviceUuid, this.lastIceTimestamp, this.offerId || undefined)
-
-                // Store offerId if we didn't have it yet
-                if (!this.offerId) {
-                    this.offerId = result.offerId
-                }
+                    .getOfferIceCandidates(this.serviceFqn, this.offerId, this.lastIceTimestamp)
 
                 let foundCandidates = false
 
