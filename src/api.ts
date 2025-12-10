@@ -243,6 +243,34 @@ export class RondevuAPI {
     }
 
     /**
+     * Get all answered offers (efficient batch polling for offerer)
+     */
+    async getAnsweredOffers(since?: number): Promise<{
+        offers: Array<{
+            offerId: string;
+            serviceId?: string;
+            answererId: string;
+            sdp: string;
+            answeredAt: number;
+        }>;
+    }> {
+        const url = since
+            ? `${this.baseUrl}/offers/answered?since=${since}`
+            : `${this.baseUrl}/offers/answered`;
+
+        const response = await fetch(url, {
+            headers: this.getAuthHeader(),
+        })
+
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({ error: 'Unknown error' }))
+            throw new Error(`Failed to get answered offers: ${error.error || response.statusText}`)
+        }
+
+        return await response.json()
+    }
+
+    /**
      * Get answer for a specific offer (offerer polls this)
      */
     async getOfferAnswer(serviceFqn: string, offerId: string): Promise<{ sdp: string; offerId: string; answererId: string; answeredAt: number } | null> {

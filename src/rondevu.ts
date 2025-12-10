@@ -281,6 +281,22 @@ export class Rondevu {
     }
 
     /**
+     * Get all answered offers (efficient batch polling for offerer)
+     * Returns all offers that have been answered since the given timestamp
+     */
+    async getAnsweredOffers(since?: number): Promise<{
+        offers: Array<{
+            offerId: string
+            serviceId?: string
+            answererId: string
+            sdp: string
+            answeredAt: number
+        }>
+    }> {
+        return await this.api.getAnsweredOffers(since)
+    }
+
+    /**
      * Add ICE candidates to specific offer
      */
     async addOfferIceCandidates(serviceFqn: string, offerId: string, candidates: RTCIceCandidateInit[]): Promise<{
