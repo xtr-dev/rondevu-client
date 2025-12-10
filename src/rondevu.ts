@@ -297,6 +297,26 @@ export class Rondevu {
     }
 
     /**
+     * Combined efficient polling for answers and ICE candidates
+     * Returns all answered offers and ICE candidates for all peer's offers since timestamp
+     */
+    async pollOffers(since?: number): Promise<{
+        answers: Array<{
+            offerId: string
+            serviceId?: string
+            answererId: string
+            sdp: string
+            answeredAt: number
+        }>
+        iceCandidates: Record<string, Array<{
+            candidate: any
+            createdAt: number
+        }>>
+    }> {
+        return await this.api.pollOffers(since)
+    }
+
+    /**
      * Add ICE candidates to specific offer
      */
     async addOfferIceCandidates(serviceFqn: string, offerId: string, candidates: RTCIceCandidateInit[]): Promise<{

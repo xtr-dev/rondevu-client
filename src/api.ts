@@ -271,6 +271,39 @@ export class RondevuAPI {
     }
 
     /**
+     * Combined efficient polling for answers and ICE candidates
+     * Returns all answered offers and ICE candidates since timestamp
+     */
+    async pollOffers(since?: number): Promise<{
+        answers: Array<{
+            offerId: string;
+            serviceId?: string;
+            answererId: string;
+            sdp: string;
+            answeredAt: number;
+        }>;
+        iceCandidates: Record<string, Array<{
+            candidate: any;
+            createdAt: number;
+        }>>;
+    }> {
+        const url = since
+            ? `${this.baseUrl}/offers/poll?since=${since}`
+            : `${this.baseUrl}/offers/poll`;
+
+        const response = await fetch(url, {
+            headers: this.getAuthHeader(),
+        })
+
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({ error: 'Unknown error' }))
+            throw new Error(`Failed to poll offers: ${error.error || response.statusText}`)
+        }
+
+        return await response.json()
+    }
+
+    /**
      * Get answer for a specific offer (offerer polls this)
      */
     async getOfferAnswer(serviceFqn: string, offerId: string): Promise<{ sdp: string; offerId: string; answererId: string; answeredAt: number } | null> {
