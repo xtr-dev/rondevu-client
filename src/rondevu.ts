@@ -310,6 +310,8 @@ export class Rondevu {
         }>
         iceCandidates: Record<string, Array<{
             candidate: any
+            role: 'offerer' | 'answerer'
+            peerId: string
             createdAt: number
         }>>
     }> {
