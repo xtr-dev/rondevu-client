@@ -16,12 +16,14 @@ TypeScript/JavaScript client for Rondevu, providing WebRTC signaling with userna
 ## Features
 
 - **Username Claiming**: Secure ownership with Ed25519 signatures
+- **Anonymous Users**: Auto-generated anonymous usernames for quick testing
 - **Service Publishing**: Publish services with multiple offers for connection pooling
 - **Service Discovery**: Direct lookup, random discovery, or paginated search
 - **Efficient Batch Polling**: Single endpoint for answers and ICE candidates (50% fewer requests)
 - **Semantic Version Matching**: Compatible version resolution (chat:1.0.0 matches any 1.x.x)
 - **TypeScript**: Full type safety and autocomplete
 - **Keypair Management**: Generate or reuse Ed25519 keypairs
+- **Automatic Signatures**: All authenticated requests signed automatically
 
 ## Installation
 
@@ -36,16 +38,18 @@ npm install @xtr-dev/rondevu-client
 ```typescript
 import { Rondevu } from '@xtr-dev/rondevu-client'
 
-// 1. Initialize and claim username
+// 1. Initialize (with username or anonymous)
 const rondevu = new Rondevu({
   apiUrl: 'https://api.ronde.vu',
-  username: 'alice'
+  username: 'alice'  // Or omit for anonymous username
 })
 
 await rondevu.initialize()  // Generates keypair automatically
+
+// 2. Claim username (optional - anonymous users auto-claim)
 await rondevu.claimUsername()
 
-// 2. Create WebRTC offer
+// 3. Create WebRTC offer
 const pc = new RTCPeerConnection({
   iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
 })
@@ -55,7 +59,7 @@ const dc = pc.createDataChannel('chat')
 const offer = await pc.createOffer()
 await pc.setLocalDescription(offer)
 
-// 3. Publish service
+// 4. Publish service
 const service = await rondevu.publishService({
   serviceFqn: 'chat:1.0.0@alice',
   offers: [{ sdp: offer.sdp }],
@@ -64,7 +68,7 @@ const service = await rondevu.publishService({
 
 const offerId = service.offers[0].offerId
 
-// 4. Poll for answer and ICE candidates (combined)
+// 5. Poll for answer and ICE candidates (combined)
 let lastPollTimestamp = 0
 const pollInterval = setInterval(async () => {
   const result = await rondevu.pollOffers(lastPollTimestamp)
@@ -90,7 +94,7 @@ const pollInterval = setInterval(async () => {
   }
 }, 1000)
 
-// 5. Send ICE candidates
+// 6. Send ICE candidates
 pc.onicecandidate = (event) => {
   if (event.candidate) {
     rondevu.addOfferIceCandidates(
@@ -101,7 +105,7 @@ pc.onicecandidate = (event) => {
   }
 }
 
-// 6. Handle messages
+// 7. Handle messages
 dc.onmessage = (event) => {
   console.log('Received:', event.data)
 }
@@ -198,17 +202,16 @@ Main class for all Rondevu operations.
 import { Rondevu } from '@xtr-dev/rondevu-client'
 
 const rondevu = new Rondevu({
-  apiUrl: string,           // Signaling server URL
-  username: string,         // Your username
-  keypair?: Keypair,        // Optional: reuse existing keypair
-  credentials?: Credentials // Optional: reuse existing credentials
+  apiUrl: string,     // Signaling server URL
+  username?: string,  // Optional: your username (auto-generates anonymous if omitted)
+  keypair?: Keypair   // Optional: reuse existing keypair
 })
 ```
 
 #### Initialization
 
 ```typescript
-// Initialize (generates keypair and credentials if not provided)
+// Initialize (generates keypair if not provided, auto-claims anonymous usernames)
 await rondevu.initialize(): Promise<void>
 ```
 
@@ -384,14 +387,9 @@ import { RondevuAPI } from '@xtr-dev/rondevu-client'
 
 const api = new RondevuAPI(
   baseUrl: string,
-  credentials?: Credentials
+  username: string,
+  keypair: Keypair
 )
-
-// Set credentials
-api.setCredentials(credentials: Credentials): void
-
-// Register peer
-await api.register(): Promise<Credentials>
 
 // Check username
 await api.checkUsername(username: string): Promise<{
@@ -440,11 +438,6 @@ interface Keypair {
   privateKey: string  // Base64-encoded Ed25519 private key
 }
 
-interface Credentials {
-  peerId: string
-  secret: string
-}
-
 interface Service {
   serviceId: string
   offers: ServiceOffer[]
@@ -477,10 +470,30 @@ interface PollingConfig {
 
 ## Advanced Usage
 
+### Anonymous Username
+
+```typescript
+// Auto-generate anonymous username (format: anon-{timestamp}-{random})
+const rondevu = new Rondevu({
+  apiUrl: 'https://api.ronde.vu'
+  // No username provided - will generate anonymous username
+})
+
+await rondevu.initialize()  // Auto-claims anonymous username
+
+console.log(rondevu.getUsername())  // e.g., "anon-lx2w34-a3f501"
+
+// Anonymous users behave exactly like regular users
+await rondevu.publishService({
+  serviceFqn: `chat:1.0.0@${rondevu.getUsername()}`,
+  offers: [{ sdp: offerSdp }]
+})
+```
+
 ### Persistent Keypair
 
 ```typescript
-// Save keypair to localStorage
+// Save keypair and username to localStorage
 const rondevu = new Rondevu({
   apiUrl: 'https://api.ronde.vu',
   username: 'alice'
@@ -490,14 +503,16 @@ await rondevu.initialize()
 await rondevu.claimUsername()
 
 // Save for later
+localStorage.setItem('rondevu-username', rondevu.getUsername())
 localStorage.setItem('rondevu-keypair', JSON.stringify(rondevu.getKeypair()))
 
 // Load on next session
+const savedUsername = localStorage.getItem('rondevu-username')
 const savedKeypair = JSON.parse(localStorage.getItem('rondevu-keypair'))
 
 const rondevu2 = new Rondevu({
   apiUrl: 'https://api.ronde.vu',
-  username: 'alice',
+  username: savedUsername,
   keypair: savedKeypair
 })
 
