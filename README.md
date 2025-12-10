@@ -2,9 +2,9 @@
 
 [![npm version](https://img.shields.io/npm/v/@xtr-dev/rondevu-client)](https://www.npmjs.com/package/@xtr-dev/rondevu-client)
 
-🌐 **Simple, high-level WebRTC peer-to-peer connections**
+🌐 **Simple WebRTC signaling client with username-based discovery**
 
-TypeScript/JavaScript client for Rondevu, providing easy-to-use WebRTC connections with automatic signaling, username-based discovery, and built-in reconnection support.
+TypeScript/JavaScript client for Rondevu, providing WebRTC signaling with username claiming, service publishing/discovery, and efficient batch polling.
 
 **Related repositories:**
 - [@xtr-dev/rondevu-client](https://github.com/xtr-dev/rondevu-client) - TypeScript client library ([npm](https://www.npmjs.com/package/@xtr-dev/rondevu-client))
@@ -15,18 +15,15 @@ TypeScript/JavaScript client for Rondevu, providing easy-to-use WebRTC connectio
 
 ## Features
 
-- **High-Level Wrappers**: ServiceHost and ServiceClient eliminate WebRTC boilerplate
-- **Username-Based Discovery**: Connect to peers by username, not complex offer/answer exchange
-- **Semver-Compatible Matching**: Requesting chat@1.0.0 matches any compatible 1.x.x version
-- **Privacy-First Design**: Services are hidden by default - no enumeration possible
-- **Automatic Reconnection**: Built-in retry logic with exponential backoff
-- **Message Queuing**: Messages sent while disconnected are queued and flushed on reconnect
-- **Cryptographic Username Claiming**: Secure ownership with Ed25519 signatures
-- **Service Publishing**: Package-style naming (chat.app@1.0.0) with multiple simultaneous offers
+- **Username Claiming**: Secure ownership with Ed25519 signatures
+- **Service Publishing**: Publish services with multiple offers for connection pooling
+- **Service Discovery**: Direct lookup, random discovery, or paginated search
+- **Efficient Batch Polling**: Single endpoint for answers and ICE candidates (50% fewer requests)
+- **Semantic Version Matching**: Compatible version resolution (chat:1.0.0 matches any 1.x.x)
 - **TypeScript**: Full type safety and autocomplete
-- **Configurable Polling**: Exponential backoff with jitter to reduce server load
+- **Keypair Management**: Generate or reuse Ed25519 keypairs
 
-## Install
+## Installation
 
 ```bash
 npm install @xtr-dev/rondevu-client
@@ -34,376 +31,534 @@ npm install @xtr-dev/rondevu-client
 
 ## Quick Start
 
-### Hosting a Service (Alice)
+### Publishing a Service (Offerer)
 
 ```typescript
-import { RondevuService, ServiceHost } from '@xtr-dev/rondevu-client'
+import { Rondevu } from '@xtr-dev/rondevu-client'
 
-// Step 1: Create and initialize service
-const service = new RondevuService({
-    apiUrl: 'https://api.ronde.vu',
-    username: 'alice'
+// 1. Initialize and claim username
+const rondevu = new Rondevu({
+  apiUrl: 'https://api.ronde.vu',
+  username: 'alice'
 })
 
-await service.initialize()  // Generates keypair
-await service.claimUsername()  // Claims username with signature
+await rondevu.initialize()  // Generates keypair automatically
+await rondevu.claimUsername()
 
-// Step 2: Create ServiceHost
-const host = new ServiceHost({
-    service: 'chat.app@1.0.0',
-    rondevuService: service,
-    maxPeers: 5,  // Accept up to 5 connections
-    ttl: 300000   // 5 minutes
+// 2. Create WebRTC offer
+const pc = new RTCPeerConnection({
+  iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
 })
 
-// Step 3: Listen for incoming connections
-host.events.on('connection', (connection) => {
-    console.log('✅ New connection!')
+const dc = pc.createDataChannel('chat')
 
-    connection.events.on('message', (msg) => {
-        console.log('📨 Received:', msg)
-        connection.sendMessage('Hello from Alice!')
-    })
+const offer = await pc.createOffer()
+await pc.setLocalDescription(offer)
 
-    connection.events.on('state-change', (state) => {
-        console.log('Connection state:', state)
-    })
+// 3. Publish service
+const service = await rondevu.publishService({
+  serviceFqn: 'chat:1.0.0@alice',
+  offers: [{ sdp: offer.sdp }],
+  ttl: 300000
 })
 
-host.events.on('error', (error) => {
-    console.error('Host error:', error)
-})
+const offerId = service.offers[0].offerId
 
-// Step 4: Start hosting
-await host.start()
-console.log('Service is now live! Others can connect to @alice')
+// 4. Poll for answer and ICE candidates (combined)
+let lastPollTimestamp = 0
+const pollInterval = setInterval(async () => {
+  const result = await rondevu.pollOffers(lastPollTimestamp)
 
-// Later: stop hosting
-host.dispose()
-```
+  // Check for answer
+  if (result.answers.length > 0) {
+    const answer = result.answers.find(a => a.offerId === offerId)
+    if (answer) {
+      await pc.setRemoteDescription({ type: 'answer', sdp: answer.sdp })
+      lastPollTimestamp = answer.answeredAt
+    }
+  }
 
-### Connecting to a Service (Bob)
+  // Process ICE candidates
+  if (result.iceCandidates[offerId]) {
+    const candidates = result.iceCandidates[offerId]
+      .filter(c => c.role === 'answerer')  // Only answerer's candidates
 
-```typescript
-import { RondevuService, ServiceClient } from '@xtr-dev/rondevu-client'
+    for (const item of candidates) {
+      await pc.addIceCandidate(new RTCIceCandidate(item.candidate))
+      lastPollTimestamp = Math.max(lastPollTimestamp, item.createdAt)
+    }
+  }
+}, 1000)
 
-// Step 1: Create and initialize service
-const service = new RondevuService({
-    apiUrl: 'https://api.ronde.vu',
-    username: 'bob'
-})
+// 5. Send ICE candidates
+pc.onicecandidate = (event) => {
+  if (event.candidate) {
+    rondevu.addOfferIceCandidates(
+      'chat:1.0.0@alice',
+      offerId,
+      [event.candidate.toJSON()]
+    )
+  }
+}
 
-await service.initialize()
-await service.claimUsername()
+// 6. Handle messages
+dc.onmessage = (event) => {
+  console.log('Received:', event.data)
+}
 
-// Step 2: Create ServiceClient
-const client = new ServiceClient({
-    username: 'alice',  // Connect to Alice
-    serviceFqn: 'chat.app@1.0.0',
-    rondevuService: service,
-    autoReconnect: true,
-    maxReconnectAttempts: 5
-})
-
-// Step 3: Listen for connection events
-client.events.on('connected', (connection) => {
-    console.log('✅ Connected to Alice!')
-
-    connection.events.on('message', (msg) => {
-        console.log('📨 Received:', msg)
-    })
-
-    // Send a message
-    connection.sendMessage('Hello from Bob!')
-})
-
-client.events.on('disconnected', () => {
-    console.log('🔌 Disconnected')
-})
-
-client.events.on('reconnecting', ({ attempt, maxAttempts }) => {
-    console.log(`🔄 Reconnecting (${attempt}/${maxAttempts})...`)
-})
-
-client.events.on('error', (error) => {
-    console.error('❌ Error:', error)
-})
-
-// Step 4: Connect
-await client.connect()
-
-// Later: disconnect
-client.dispose()
-```
-
-## Core Concepts
-
-### RondevuService
-
-Handles authentication and username management:
-- Generates Ed25519 keypair for signing
-- Claims usernames with cryptographic proof
-- Provides API client for signaling server
-
-### ServiceHost
-
-High-level wrapper for hosting a WebRTC service:
-- Automatically creates and publishes offers
-- Handles incoming connections
-- Manages ICE candidate exchange
-- Supports multiple simultaneous peers
-
-### ServiceClient
-
-High-level wrapper for connecting to services:
-- Discovers services by username
-- Handles offer/answer exchange automatically
-- Built-in auto-reconnection with exponential backoff
-- Event-driven API
-
-### RTCDurableConnection
-
-Low-level connection wrapper (used internally):
-- Manages WebRTC PeerConnection lifecycle
-- Handles ICE candidate polling
-- Provides message queue for reliability
-- State management and events
-
-## API Reference
-
-### RondevuService
-
-```typescript
-const service = new RondevuService({
-    apiUrl: string,           // Signaling server URL
-    username: string,         // Your username
-    keypair?: Keypair         // Optional: reuse existing keypair
-})
-
-// Initialize service (generates keypair if not provided)
-await service.initialize(): Promise<void>
-
-// Claim username with cryptographic signature
-await service.claimUsername(): Promise<void>
-
-// Check if username is claimed
-service.isUsernameClaimed(): boolean
-
-// Get current username
-service.getUsername(): string
-
-// Get keypair
-service.getKeypair(): Keypair
-
-// Get API client
-service.getAPI(): RondevuAPI
-```
-
-### ServiceHost
-
-```typescript
-const host = new ServiceHost({
-    service: string,              // Service FQN (e.g., 'chat.app@1.0.0')
-    rondevuService: RondevuService,
-    maxPeers?: number,            // Default: 5
-    ttl?: number,                 // Default: 300000 (5 minutes)
-    isPublic?: boolean,           // Default: true
-    rtcConfiguration?: RTCConfiguration
-})
-
-// Start hosting
-await host.start(): Promise<void>
-
-// Stop hosting and cleanup
-host.dispose(): void
-
-// Get all active connections
-host.getConnections(): RTCDurableConnection[]
-
-// Events
-host.events.on('connection', (conn: RTCDurableConnection) => {})
-host.events.on('error', (error: Error) => {})
-```
-
-### ServiceClient
-
-```typescript
-const client = new ServiceClient({
-    username: string,             // Host username to connect to
-    serviceFqn: string,          // Service FQN (e.g., 'chat.app@1.0.0')
-    rondevuService: RondevuService,
-    autoReconnect?: boolean,     // Default: true
-    maxReconnectAttempts?: number, // Default: 5
-    rtcConfiguration?: RTCConfiguration
-})
-
-// Connect to service
-await client.connect(): Promise<RTCDurableConnection>
-
-// Disconnect and cleanup
-client.dispose(): void
-
-// Get current connection
-client.getConnection(): RTCDurableConnection | null
-
-// Events
-client.events.on('connected', (conn: RTCDurableConnection) => {})
-client.events.on('disconnected', () => {})
-client.events.on('reconnecting', (info: { attempt: number, maxAttempts: number }) => {})
-client.events.on('error', (error: Error) => {})
-```
-
-### RTCDurableConnection
-
-```typescript
-// Connection state
-connection.state: 'connected' | 'connecting' | 'disconnected'
-
-// Send message (returns true if sent, false if queued)
-await connection.sendMessage(message: string): Promise<boolean>
-
-// Queue message for sending when connected
-await connection.queueMessage(message: string, options?: QueueMessageOptions): Promise<void>
-
-// Disconnect
-connection.disconnect(): void
-
-// Events
-connection.events.on('message', (msg: string) => {})
-connection.events.on('state-change', (state: ConnectionStates) => {})
-```
-
-## Configuration
-
-### Polling Configuration
-
-The signaling uses configurable polling with exponential backoff:
-
-```typescript
-// Default polling config
-{
-    initialInterval: 500,      // Start at 500ms
-    maxInterval: 5000,         // Max 5 seconds
-    backoffMultiplier: 1.5,    // Increase by 1.5x each time
-    maxRetries: 50,            // Max 50 attempts
-    jitter: true               // Add random 0-100ms to prevent thundering herd
+dc.onopen = () => {
+  dc.send('Hello from Alice!')
 }
 ```
 
-This is handled automatically - no configuration needed.
-
-### WebRTC Configuration
-
-Provide custom STUN/TURN servers:
+### Connecting to a Service (Answerer)
 
 ```typescript
-const host = new ServiceHost({
-    service: 'chat.app@1.0.0',
-    rondevuService: service,
-    rtcConfiguration: {
-        iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            {
-                urls: 'turn:turn.example.com:3478',
-                username: 'user',
-                credential: 'pass'
-            }
-        ]
+import { Rondevu } from '@xtr-dev/rondevu-client'
+
+// 1. Initialize
+const rondevu = new Rondevu({
+  apiUrl: 'https://api.ronde.vu',
+  username: 'bob'
+})
+
+await rondevu.initialize()
+await rondevu.claimUsername()
+
+// 2. Get service offer
+const serviceData = await rondevu.getService('chat:1.0.0@alice')
+
+// 3. Create peer connection
+const pc = new RTCPeerConnection({
+  iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+})
+
+// 4. Set remote offer and create answer
+await pc.setRemoteDescription({ type: 'offer', sdp: serviceData.sdp })
+
+const answer = await pc.createAnswer()
+await pc.setLocalDescription(answer)
+
+// 5. Send answer
+await rondevu.postOfferAnswer(
+  serviceData.serviceFqn,
+  serviceData.offerId,
+  answer.sdp
+)
+
+// 6. Send ICE candidates
+pc.onicecandidate = (event) => {
+  if (event.candidate) {
+    rondevu.addOfferIceCandidates(
+      serviceData.serviceFqn,
+      serviceData.offerId,
+      [event.candidate.toJSON()]
+    )
+  }
+}
+
+// 7. Poll for ICE candidates
+let lastIceTimestamp = 0
+const iceInterval = setInterval(async () => {
+  const result = await rondevu.getOfferIceCandidates(
+    serviceData.serviceFqn,
+    serviceData.offerId,
+    lastIceTimestamp
+  )
+
+  for (const item of result.candidates) {
+    if (item.candidate) {
+      await pc.addIceCandidate(new RTCIceCandidate(item.candidate))
+      lastIceTimestamp = item.createdAt
     }
+  }
+}, 1000)
+
+// 8. Handle data channel
+pc.ondatachannel = (event) => {
+  const dc = event.channel
+
+  dc.onmessage = (event) => {
+    console.log('Received:', event.data)
+  }
+
+  dc.onopen = () => {
+    dc.send('Hello from Bob!')
+  }
+}
+```
+
+## API Reference
+
+### Rondevu Class
+
+Main class for all Rondevu operations.
+
+```typescript
+import { Rondevu } from '@xtr-dev/rondevu-client'
+
+const rondevu = new Rondevu({
+  apiUrl: string,           // Signaling server URL
+  username: string,         // Your username
+  keypair?: Keypair,        // Optional: reuse existing keypair
+  credentials?: Credentials // Optional: reuse existing credentials
 })
 ```
 
-## Username Rules
+#### Initialization
 
-- **Format**: Lowercase alphanumeric + dash (`a-z`, `0-9`, `-`)
-- **Length**: 3-32 characters
-- **Pattern**: `^[a-z0-9][a-z0-9-]*[a-z0-9]$`
-- **Validity**: 365 days from claim/last use
-- **Ownership**: Secured by Ed25519 public key signature
+```typescript
+// Initialize (generates keypair and credentials if not provided)
+await rondevu.initialize(): Promise<void>
+```
 
-## Examples
+#### Username Management
 
-### Chat Application
+```typescript
+// Claim username with Ed25519 signature
+await rondevu.claimUsername(): Promise<void>
 
-See [demo/demo.js](./demo/demo.js) for a complete working example.
+// Check if username is claimed (checks server)
+await rondevu.isUsernameClaimed(): Promise<boolean>
+
+// Get username
+rondevu.getUsername(): string
+
+// Get public key
+rondevu.getPublicKey(): string | null
+
+// Get keypair (for backup/storage)
+rondevu.getKeypair(): Keypair | null
+```
+
+#### Service Publishing
+
+```typescript
+// Publish service with offers
+await rondevu.publishService({
+  serviceFqn: string,  // e.g., 'chat:1.0.0@alice'
+  offers: Array<{ sdp: string }>,
+  ttl?: number         // Optional: milliseconds (default: 300000)
+}): Promise<Service>
+```
+
+#### Service Discovery
+
+```typescript
+// Direct lookup by FQN (with username)
+await rondevu.getService('chat:1.0.0@alice'): Promise<ServiceOffer>
+
+// Random discovery (without username)
+await rondevu.discoverService('chat:1.0.0'): Promise<ServiceOffer>
+
+// Paginated discovery (returns multiple offers)
+await rondevu.discoverServices(
+  'chat:1.0.0',  // serviceVersion
+  10,            // limit
+  0              // offset
+): Promise<{ services: ServiceOffer[], count: number, limit: number, offset: number }>
+```
+
+#### WebRTC Signaling
+
+```typescript
+// Post answer SDP
+await rondevu.postOfferAnswer(
+  serviceFqn: string,
+  offerId: string,
+  sdp: string
+): Promise<{ success: boolean, offerId: string }>
+
+// Get answer SDP (offerer polls this - deprecated, use pollOffers instead)
+await rondevu.getOfferAnswer(
+  serviceFqn: string,
+  offerId: string
+): Promise<{ sdp: string, offerId: string, answererId: string, answeredAt: number } | null>
+
+// Combined polling for answers and ICE candidates (RECOMMENDED for offerers)
+await rondevu.pollOffers(since?: number): Promise<{
+  answers: Array<{
+    offerId: string
+    serviceId?: string
+    answererId: string
+    sdp: string
+    answeredAt: number
+  }>
+  iceCandidates: Record<string, Array<{
+    candidate: any
+    role: 'offerer' | 'answerer'
+    peerId: string
+    createdAt: number
+  }>>
+}>
+
+// Add ICE candidates
+await rondevu.addOfferIceCandidates(
+  serviceFqn: string,
+  offerId: string,
+  candidates: RTCIceCandidateInit[]
+): Promise<{ count: number, offerId: string }>
+
+// Get ICE candidates (with polling support)
+await rondevu.getOfferIceCandidates(
+  serviceFqn: string,
+  offerId: string,
+  since: number = 0
+): Promise<{ candidates: IceCandidate[], offerId: string }>
+```
+
+### RondevuSignaler Class
+
+Higher-level signaling abstraction with automatic polling and event listeners.
+
+```typescript
+import { RondevuSignaler } from '@xtr-dev/rondevu-client'
+
+const signaler = new RondevuSignaler(
+  rondevu: Rondevu,
+  service: string,      // Service FQN without username (e.g., 'chat:1.0.0')
+  host?: string,        // Optional: target username for answerer
+  pollingConfig?: {
+    initialInterval?: number      // Default: 500ms
+    maxInterval?: number           // Default: 5000ms
+    backoffMultiplier?: number     // Default: 1.5
+    maxRetries?: number            // Default: 50
+    jitter?: boolean               // Default: true
+  }
+)
+```
+
+#### Offerer Side
+
+```typescript
+// Set offer (automatically starts polling for answer and ICE)
+await signaler.setOffer(offer: RTCSessionDescriptionInit): Promise<void>
+
+// Listen for answer
+const unbind = signaler.addAnswerListener((answer) => {
+  console.log('Received answer:', answer)
+})
+
+// Listen for ICE candidates
+signaler.addListener((candidate) => {
+  console.log('Received ICE candidate:', candidate)
+})
+
+// Send ICE candidate
+await signaler.addIceCandidate(candidate: RTCIceCandidate): Promise<void>
+```
+
+#### Answerer Side
+
+```typescript
+// Listen for offer (automatically searches for service)
+const unbind = signaler.addOfferListener((offer) => {
+  console.log('Received offer:', offer)
+})
+
+// Set answer (automatically starts polling for ICE)
+await signaler.setAnswer(answer: RTCSessionDescriptionInit): Promise<void>
+
+// Send ICE candidate
+await signaler.addIceCandidate(candidate: RTCIceCandidate): Promise<void>
+
+// Listen for ICE candidates
+signaler.addListener((candidate) => {
+  console.log('Received ICE candidate:', candidate)
+})
+```
+
+#### Cleanup
+
+```typescript
+// Stop all polling and cleanup
+signaler.dispose(): void
+```
+
+### RondevuAPI Class
+
+Low-level HTTP API client (used internally by Rondevu class).
+
+```typescript
+import { RondevuAPI } from '@xtr-dev/rondevu-client'
+
+const api = new RondevuAPI(
+  baseUrl: string,
+  credentials?: Credentials
+)
+
+// Set credentials
+api.setCredentials(credentials: Credentials): void
+
+// Register peer
+await api.register(): Promise<Credentials>
+
+// Check username
+await api.checkUsername(username: string): Promise<{
+  available: boolean
+  publicKey?: string
+  claimedAt?: number
+  expiresAt?: number
+}>
+
+// Claim username
+await api.claimUsername(
+  username: string,
+  publicKey: string,
+  signature: string,
+  message: string
+): Promise<{ success: boolean, username: string }>
+
+// ... (all other HTTP endpoints)
+```
+
+#### Cryptographic Helpers
+
+```typescript
+// Generate Ed25519 keypair
+const keypair = await RondevuAPI.generateKeypair(): Promise<Keypair>
+
+// Sign message
+const signature = await RondevuAPI.signMessage(
+  message: string,
+  privateKey: string
+): Promise<string>
+
+// Verify signature
+const valid = await RondevuAPI.verifySignature(
+  message: string,
+  signature: string,
+  publicKey: string
+): Promise<boolean>
+```
+
+## Types
+
+```typescript
+interface Keypair {
+  publicKey: string   // Base64-encoded Ed25519 public key
+  privateKey: string  // Base64-encoded Ed25519 private key
+}
+
+interface Credentials {
+  peerId: string
+  secret: string
+}
+
+interface Service {
+  serviceId: string
+  offers: ServiceOffer[]
+  username: string
+  serviceFqn: string
+  createdAt: number
+  expiresAt: number
+}
+
+interface ServiceOffer {
+  offerId: string
+  sdp: string
+  createdAt: number
+  expiresAt: number
+}
+
+interface IceCandidate {
+  candidate: RTCIceCandidateInit
+  createdAt: number
+}
+
+interface PollingConfig {
+  initialInterval?: number     // Default: 500ms
+  maxInterval?: number          // Default: 5000ms
+  backoffMultiplier?: number    // Default: 1.5
+  maxRetries?: number           // Default: 50
+  jitter?: boolean              // Default: true
+}
+```
+
+## Advanced Usage
 
 ### Persistent Keypair
 
 ```typescript
 // Save keypair to localStorage
-const service = new RondevuService({
-    apiUrl: 'https://api.ronde.vu',
-    username: 'alice'
+const rondevu = new Rondevu({
+  apiUrl: 'https://api.ronde.vu',
+  username: 'alice'
 })
 
-await service.initialize()
-await service.claimUsername()
+await rondevu.initialize()
+await rondevu.claimUsername()
 
 // Save for later
-localStorage.setItem('rondevu-keypair', JSON.stringify(service.getKeypair()))
-localStorage.setItem('rondevu-username', service.getUsername())
+localStorage.setItem('rondevu-keypair', JSON.stringify(rondevu.getKeypair()))
 
 // Load on next session
 const savedKeypair = JSON.parse(localStorage.getItem('rondevu-keypair'))
-const savedUsername = localStorage.getItem('rondevu-username')
 
-const service2 = new RondevuService({
-    apiUrl: 'https://api.ronde.vu',
-    username: savedUsername,
-    keypair: savedKeypair
+const rondevu2 = new Rondevu({
+  apiUrl: 'https://api.ronde.vu',
+  username: 'alice',
+  keypair: savedKeypair
 })
 
-await service2.initialize()  // Reuses keypair
+await rondevu2.initialize()  // Reuses keypair
 ```
 
-### Message Queue Example
+### Service Discovery
 
 ```typescript
-// Messages are automatically queued if not connected yet
-client.events.on('connected', (connection) => {
-    // Send immediately
-    connection.sendMessage('Hello!')
-})
+// Get a random available service
+const service = await rondevu.discoverService('chat:1.0.0')
+console.log('Discovered:', service.username)
 
-// Or queue for later
-await client.connect()
-const conn = client.getConnection()
-await conn.queueMessage('This will be sent when connected', {
-    expiresAt: Date.now() + 60000  // Expire after 1 minute
-})
+// Get multiple services (paginated)
+const result = await rondevu.discoverServices('chat:1.0.0', 10, 0)
+console.log(`Found ${result.count} services:`)
+result.services.forEach(s => console.log(`  - ${s.username}`))
 ```
 
-## Migration from v0.9.x
-
-v0.11.0+ introduces high-level wrappers, RESTful API changes, and semver-compatible discovery:
-
-**API Changes:**
-- Server endpoints restructured (`/usernames/*` → `/users/*`)
-- Added `ServiceHost` and `ServiceClient` wrappers
-- Message queue fully implemented
-- Configurable polling with exponential backoff
-- Removed deprecated `cleanup()` methods (use `dispose()`)
-- **v0.11.0+**: Services use `offers` array instead of single `sdp`
-- **v0.11.0+**: Semver-compatible service discovery (chat@1.0.0 matches 1.x.x)
-- **v0.11.0+**: All services are hidden - no listing endpoint
-- **v0.11.0+**: Services support multiple simultaneous offers for connection pooling
-
-**Migration Guide:**
+### Multiple Concurrent Offers
 
 ```typescript
-// Before (v0.9.x) - Manual WebRTC setup
-const signaler = new RondevuSignaler(service, 'chat@1.0.0')
-const context = new WebRTCContext()
-const pc = context.createPeerConnection()
-// ... 50+ lines of boilerplate
+// Publish service with multiple offers for connection pooling
+const offers = []
+const connections = []
 
-// After (v0.11.0) - ServiceHost wrapper
-const host = new ServiceHost({
-    service: 'chat@1.0.0',
-    rondevuService: service
+for (let i = 0; i < 5; i++) {
+  const pc = new RTCPeerConnection(rtcConfig)
+  const dc = pc.createDataChannel('chat')
+  const offer = await pc.createOffer()
+  await pc.setLocalDescription(offer)
+
+  offers.push({ sdp: offer.sdp })
+  connections.push({ pc, dc })
+}
+
+const service = await rondevu.publishService({
+  serviceFqn: 'chat:1.0.0@alice',
+  offers,
+  ttl: 300000
 })
-await host.start()
-// Done!
+
+// Each offer can be answered independently
+console.log(`Published ${service.offers.length} offers`)
+```
+
+### Custom Polling Configuration
+
+```typescript
+const signaler = new RondevuSignaler(
+  rondevu,
+  'chat:1.0.0',
+  'alice',
+  {
+    initialInterval: 1000,    // Start at 1 second
+    maxInterval: 10000,       // Max 10 seconds
+    backoffMultiplier: 2,     // Double each time
+    maxRetries: 30,           // Stop after 30 retries
+    jitter: true              // Add randomness
+  }
+)
 ```
 
 ## Platform Support
@@ -419,38 +574,66 @@ npm install wrtc
 ```
 
 ```typescript
-import { WebRTCContext } from '@xtr-dev/rondevu-client'
 import { RTCPeerConnection, RTCSessionDescription, RTCIceCandidate } from 'wrtc'
 
-// Configure WebRTC context
-const context = new WebRTCContext({
-    RTCPeerConnection,
-    RTCSessionDescription,
-    RTCIceCandidate
-} as any)
+// Use wrtc implementations
+const pc = new RTCPeerConnection()
 ```
 
-## TypeScript
+## Username Rules
 
-All types are exported:
+- **Format**: Lowercase alphanumeric + dash (`a-z`, `0-9`, `-`)
+- **Length**: 3-32 characters
+- **Pattern**: `^[a-z0-9][a-z0-9-]*[a-z0-9]$`
+- **Validity**: 365 days from claim/last use
+- **Ownership**: Secured by Ed25519 public key signature
+
+## Service FQN Format
+
+- **Format**: `service:version@username`
+- **Service**: Lowercase alphanumeric + dash (e.g., `chat`, `video-call`)
+- **Version**: Semantic versioning (e.g., `1.0.0`, `2.1.3`)
+- **Username**: Claimed username
+- **Example**: `chat:1.0.0@alice`
+
+## Examples
+
+See the [demo](https://github.com/xtr-dev/rondevu-demo) for a complete working example with React UI.
+
+## Migration from v0.3.x
+
+v0.4.0 removes high-level abstractions and uses manual WebRTC setup:
+
+**Removed:**
+- `ServiceHost` class (use manual WebRTC + `publishService()`)
+- `ServiceClient` class (use manual WebRTC + `getService()`)
+- `RTCDurableConnection` class (use native WebRTC APIs)
+- `RondevuService` class (merged into `Rondevu`)
+
+**Added:**
+- `pollOffers()` - Combined polling for answers and ICE candidates
+- `RondevuSignaler` - Simplified signaling with automatic polling
+
+**Migration Example:**
 
 ```typescript
-import type {
-    RondevuServiceOptions,
-    ServiceHostOptions,
-    ServiceHostEvents,
-    ServiceClientOptions,
-    ServiceClientEvents,
-    ConnectionInterface,
-    ConnectionEvents,
-    ConnectionStates,
-    Message,
-    QueueMessageOptions,
-    Signaler,
-    PollingConfig,
-    Credentials,
-    Keypair
-} from '@xtr-dev/rondevu-client'
+// Before (v0.3.x) - ServiceHost
+const host = new ServiceHost({
+  service: 'chat@1.0.0',
+  rondevuService: service
+})
+await host.start()
+
+// After (v0.4.0) - Manual setup
+const pc = new RTCPeerConnection()
+const dc = pc.createDataChannel('chat')
+const offer = await pc.createOffer()
+await pc.setLocalDescription(offer)
+
+await rondevu.publishService({
+  serviceFqn: 'chat:1.0.0@alice',
+  offers: [{ sdp: offer.sdp }]
+})
 ```
 
 ## License
