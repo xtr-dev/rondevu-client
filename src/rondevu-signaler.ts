@@ -111,7 +111,7 @@ export class RondevuSignaler implements Signaler {
         }
 
         // Send answer to the service
-        const result = await this.rondevu.getAPI().postOfferAnswer(this.serviceFqn, this.offerId, answer.sdp)
+        const result = await this.rondevu.getAPIPublic().postOfferAnswer(this.serviceFqn, this.offerId, answer.sdp)
         this.offerId = result.offerId
         this.isOfferer = false
 
@@ -173,7 +173,7 @@ export class RondevuSignaler implements Signaler {
         }
 
         try {
-            await this.rondevu.getAPI().addOfferIceCandidates(
+            await this.rondevu.getAPIPublic().addOfferIceCandidates(
                 this.serviceFqn,
                 this.offerId,
                 [candidateData]
@@ -212,7 +212,7 @@ export class RondevuSignaler implements Signaler {
         try {
             // Get service by FQN (service should include @username)
             const serviceFqn = `${this.service}@${this.host}`
-            const serviceData = await this.rondevu.getAPI().getService(serviceFqn)
+            const serviceData = await this.rondevu.getAPIPublic().getService(serviceFqn)
 
             if (!serviceData) {
                 console.warn(`No service found for ${serviceFqn}`)
@@ -390,7 +390,7 @@ export class RondevuSignaler implements Signaler {
 
             try {
                 const result = await this.rondevu
-                    .getAPI()
+                    .getAPIPublic()
                     .getOfferIceCandidates(this.serviceFqn, this.offerId, this.lastPollTimestamp)
 
                 let foundCandidates = false

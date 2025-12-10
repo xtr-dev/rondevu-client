@@ -1,10 +1,9 @@
-import { RondevuAPI, Credentials, Keypair, Service, ServiceRequest, IceCandidate } from './api.js'
+import { RondevuAPI, Keypair, Service, ServiceRequest, IceCandidate } from './api.js'
 
 export interface RondevuOptions {
     apiUrl: string
-    username: string
-    keypair?: Keypair
-    credentials?: Credentials
+    username?: string  // Optional, will generate anonymous if not provided
+    keypair?: Keypair  // Optional, will generate if not provided
 }
 
 export interface PublishServiceOptions {
@@ -22,19 +21,24 @@ export interface PublishServiceOptions {
  * - Service discovery (direct, random, paginated)
  * - WebRTC signaling (offer/answer exchange, ICE relay)
  * - Keypair management
+ * - Anonymous usage (auto-generates username and keypair)
  *
  * @example
  * ```typescript
- * // Initialize (generates keypair automatically)
+ * // Option 1: Named user (manually claim username)
  * const rondevu = new Rondevu({
  *   apiUrl: 'https://signal.example.com',
  *   username: 'alice',
  * })
- *
  * await rondevu.initialize()
+ * await rondevu.claimUsername()  // Claim username once
  *
- * // Claim username (one time)
- * await rondevu.claimUsername()
+ * // Option 2: Anonymous user (auto-claims generated username)
+ * const rondevu = new Rondevu({
+ *   apiUrl: 'https://signal.example.com',
+ *   // username omitted - will generate 'anon-xxxxx'
+ * })
+ * await rondevu.initialize()  // Auto-claims anonymous username
  *
  * // Publish a service
  * const publishedService = await rondevu.publishService({
@@ -51,15 +55,16 @@ export interface PublishServiceOptions {
  * ```
  */
 export class Rondevu {
-    private readonly api: RondevuAPI
-    private readonly username: string
+    private api: RondevuAPI | null = null
+    private readonly apiUrl: string
+    private username: string
     private keypair: Keypair | null = null
     private usernameClaimed = false
 
     constructor(options: RondevuOptions) {
-        this.username = options.username
+        this.apiUrl = options.apiUrl
+        this.username = options.username || this.generateAnonymousUsername()
         this.keypair = options.keypair || null
-        this.api = new RondevuAPI(options.apiUrl, options.credentials)
 
         console.log('[Rondevu] Constructor called:', {
             username: this.username,
@@ -68,17 +73,29 @@ export class Rondevu {
         })
     }
 
+    /**
+     * Generate an anonymous username with timestamp and random component
+     */
+    private generateAnonymousUsername(): string {
+        const timestamp = Date.now().toString(36)
+        const random = Array.from(crypto.getRandomValues(new Uint8Array(3)))
+            .map(b => b.toString(16).padStart(2, '0')).join('')
+        return `anon-${timestamp}-${random}`
+    }
+
     // ============================================
     // Initialization
     // ============================================
 
     /**
-     * Initialize the service - generates keypair if not provided
+     * Initialize the service - generates keypair if not provided and creates API instance
+     * Auto-claims username for anonymous users
      * Call this before using other methods
      */
     async initialize(): Promise<void> {
         console.log('[Rondevu] Initialize called, hasKeypair:', !!this.keypair)
 
+        // Generate keypair if not provided
         if (!this.keypair) {
             console.log('[Rondevu] Generating new keypair...')
             this.keypair = await RondevuAPI.generateKeypair()
@@ -87,10 +104,20 @@ export class Rondevu {
             console.log('[Rondevu] Using existing keypair, publicKey:', this.keypair.publicKey)
         }
 
-        // Register with API if no credentials provided
-        if (!this.api['credentials']) {
-            const credentials = await this.api.register()
-            this.api.setCredentials(credentials)
+        // Create API instance with username and keypair
+        this.api = new RondevuAPI(this.apiUrl, this.username, this.keypair)
+        console.log('[Rondevu] Created API instance with username:', this.username)
+
+        // Auto-claim username for anonymous users
+        if (this.username.startsWith('anon-')) {
+            console.log('[Rondevu] Auto-claiming anonymous username:', this.username)
+            try {
+                await this.claimUsername()
+                console.log('[Rondevu] Successfully claimed anonymous username')
+            } catch (error) {
+                console.error('[Rondevu] Failed to claim anonymous username:', error)
+                // Don't throw - allow the user to continue, they just won't be able to publish services
+            }
         }
     }
 
@@ -108,7 +135,7 @@ export class Rondevu {
         }
 
         // Check if username is already claimed
-        const check = await this.api.checkUsername(this.username)
+        const check = await this.getAPI().checkUsername(this.username)
         if (!check.available) {
             // Verify it's claimed by us
             if (check.publicKey === this.keypair.publicKey) {
@@ -123,8 +150,18 @@ export class Rondevu {
         const signature = await RondevuAPI.signMessage(message, this.keypair.privateKey)
 
         // Claim the username
-        await this.api.claimUsername(this.username, this.keypair.publicKey, signature, message)
+        await this.getAPI().claimUsername(this.username, this.keypair.publicKey, signature, message)
         this.usernameClaimed = true
+    }
+
+    /**
+     * Get API instance (creates lazily if needed)
+     */
+    private getAPI(): RondevuAPI {
+        if (!this.api) {
+            throw new Error('Not initialized. Call initialize() first.')
+        }
+        return this.api
     }
 
     /**
@@ -136,7 +173,7 @@ export class Rondevu {
         }
 
         try {
-            const check = await this.api.checkUsername(this.username)
+            const check = await this.getAPI().checkUsername(this.username)
 
             // Debug logging
             console.log('[Rondevu] Username check:', {
@@ -194,7 +231,7 @@ export class Rondevu {
         }
 
         // Publish to server
-        return await this.api.publishService(serviceRequest)
+        return await this.getAPI().publishService(serviceRequest)
     }
 
     // ============================================
@@ -214,7 +251,7 @@ export class Rondevu {
         createdAt: number
         expiresAt: number
     }> {
-        return await this.api.getService(serviceFqn)
+        return await this.getAPI().getService(serviceFqn)
     }
 
     /**
@@ -230,7 +267,7 @@ export class Rondevu {
         createdAt: number
         expiresAt: number
     }> {
-        return await this.api.discoverService(serviceVersion)
+        return await this.getAPI().discoverService(serviceVersion)
     }
 
     /**
@@ -251,7 +288,7 @@ export class Rondevu {
         limit: number
         offset: number
     }> {
-        return await this.api.discoverServices(serviceVersion, limit, offset)
+        return await this.getAPI().discoverServices(serviceVersion, limit, offset)
     }
 
     // ============================================
@@ -265,7 +302,7 @@ export class Rondevu {
         success: boolean
         offerId: string
     }> {
-        return await this.api.postOfferAnswer(serviceFqn, offerId, sdp)
+        return await this.getAPI().postOfferAnswer(serviceFqn, offerId, sdp)
     }
 
     /**
@@ -277,7 +314,7 @@ export class Rondevu {
         answererId: string
         answeredAt: number
     } | null> {
-        return await this.api.getOfferAnswer(serviceFqn, offerId)
+        return await this.getAPI().getOfferAnswer(serviceFqn, offerId)
     }
 
     /**
@@ -293,7 +330,7 @@ export class Rondevu {
             answeredAt: number
         }>
     }> {
-        return await this.api.getAnsweredOffers(since)
+        return await this.getAPI().getAnsweredOffers(since)
     }
 
     /**
@@ -315,7 +352,7 @@ export class Rondevu {
             createdAt: number
         }>>
     }> {
-        return await this.api.pollOffers(since)
+        return await this.getAPI().pollOffers(since)
     }
 
     /**
@@ -325,7 +362,7 @@ export class Rondevu {
         count: number
         offerId: string
     }> {
-        return await this.api.addOfferIceCandidates(serviceFqn, offerId, candidates)
+        return await this.getAPI().addOfferIceCandidates(serviceFqn, offerId, candidates)
     }
 
     /**
@@ -335,7 +372,7 @@ export class Rondevu {
         candidates: IceCandidate[]
         offerId: string
     }> {
-        return await this.api.getOfferIceCandidates(serviceFqn, offerId, since)
+        return await this.getAPI().getOfferIceCandidates(serviceFqn, offerId, since)
     }
 
     // ============================================
@@ -367,7 +404,10 @@ export class Rondevu {
      * Access to underlying API for advanced operations
      * @deprecated Use direct methods on Rondevu instance instead
      */
-    getAPI(): RondevuAPI {
+    getAPIPublic(): RondevuAPI {
+        if (!this.api) {
+            throw new Error('Not initialized. Call initialize() first.')
+        }
         return this.api
     }
 }

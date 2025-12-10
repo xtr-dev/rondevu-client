@@ -14,7 +14,6 @@ export type {
 } from './types.js'
 
 export type {
-    Credentials,
     Keypair,
     OfferRequest,
     Offer,

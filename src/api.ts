@@ -9,11 +9,6 @@ ed25519.hashes.sha512Async = async (message: Uint8Array) => {
     return new Uint8Array(await crypto.subtle.digest('SHA-512', message as BufferSource))
 }
 
-export interface Credentials {
-    peerId: string
-    secret: string
-}
-
 export interface Keypair {
     publicKey: string
     privateKey: string
@@ -92,26 +87,26 @@ function base64ToBytes(base64: string): Uint8Array {
 export class RondevuAPI {
     constructor(
         private baseUrl: string,
-        private credentials?: Credentials
+        private username: string,
+        private keypair: Keypair
     ) {}
 
     /**
-     * Set credentials for authentication
+     * Generate authentication parameters (username, signature, message) for API calls
      */
-    setCredentials(credentials: Credentials): void {
-        this.credentials = credentials
-    }
+    private async generateAuthParams(action: string, params: string = ''): Promise<{
+        username: string;
+        signature: string;
+        message: string;
+    }> {
+        const timestamp = Date.now();
+        const message = params
+            ? `${action}:${this.username}:${params}:${timestamp}`
+            : `${action}:${this.username}:${timestamp}`;
 
-    /**
-     * Authentication header
-     */
-    private getAuthHeader(): Record<string, string> {
-        if (!this.credentials) {
-            return {}
-        }
-        return {
-            Authorization: `Bearer ${this.credentials.peerId}:${this.credentials.secret}`,
-        }
+        const signature = await RondevuAPI.signMessage(message, this.keypair.privateKey);
+
+        return { username: this.username, signature, message };
     }
 
     // ============================================
@@ -160,27 +155,6 @@ export class RondevuAPI {
     }
 
     // ============================================
-    // Authentication
-    // ============================================
-
-    /**
-     * Register a new peer and get credentials
-     */
-    async register(): Promise<Credentials> {
-        const response = await fetch(`${this.baseUrl}/register`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-        })
-
-        if (!response.ok) {
-            const error = await response.json().catch(() => ({ error: 'Unknown error' }))
-            throw new Error(`Registration failed: ${error.error || response.statusText}`)
-        }
-
-        return await response.json()
-    }
-
-    // ============================================
     // Offers
     // ============================================
 
@@ -188,13 +162,14 @@ export class RondevuAPI {
      * Create one or more offers
      */
     async createOffers(offers: OfferRequest[]): Promise<Offer[]> {
+        const auth = await this.generateAuthParams('createOffers');
+
         const response = await fetch(`${this.baseUrl}/offers`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                ...this.getAuthHeader(),
             },
-            body: JSON.stringify({ offers }),
+            body: JSON.stringify({ offers, ...auth }),
         })
 
         if (!response.ok) {
@@ -209,9 +184,13 @@ export class RondevuAPI {
      * Get offer by ID
      */
     async getOffer(offerId: string): Promise<Offer> {
-        const response = await fetch(`${this.baseUrl}/offers/${offerId}`, {
-            headers: this.getAuthHeader(),
-        })
+        const auth = await this.generateAuthParams('getOffer', offerId);
+        const url = new URL(`${this.baseUrl}/offers/${offerId}`);
+        url.searchParams.set('username', auth.username);
+        url.searchParams.set('signature', auth.signature);
+        url.searchParams.set('message', auth.message);
+
+        const response = await fetch(url.toString())
 
         if (!response.ok) {
             const error = await response.json().catch(() => ({ error: 'Unknown error' }))
@@ -225,13 +204,14 @@ export class RondevuAPI {
      * Answer a specific offer from a service
      */
     async postOfferAnswer(serviceFqn: string, offerId: string, sdp: string): Promise<{ success: boolean; offerId: string }> {
+        const auth = await this.generateAuthParams('answerOffer', `${serviceFqn}:${offerId}`);
+
         const response = await fetch(`${this.baseUrl}/services/${encodeURIComponent(serviceFqn)}/offers/${offerId}/answer`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                ...this.getAuthHeader(),
             },
-            body: JSON.stringify({ sdp }),
+            body: JSON.stringify({ sdp, ...auth }),
         })
 
         if (!response.ok) {
@@ -254,13 +234,17 @@ export class RondevuAPI {
             answeredAt: number;
         }>;
     }> {
-        const url = since
-            ? `${this.baseUrl}/offers/answered?since=${since}`
-            : `${this.baseUrl}/offers/answered`;
+        const auth = await this.generateAuthParams('getAnsweredOffers', since?.toString() || '');
+        const url = new URL(`${this.baseUrl}/offers/answered`);
 
-        const response = await fetch(url, {
-            headers: this.getAuthHeader(),
-        })
+        if (since) {
+            url.searchParams.set('since', since.toString());
+        }
+        url.searchParams.set('username', auth.username);
+        url.searchParams.set('signature', auth.signature);
+        url.searchParams.set('message', auth.message);
+
+        const response = await fetch(url.toString())
 
         if (!response.ok) {
             const error = await response.json().catch(() => ({ error: 'Unknown error' }))
@@ -289,13 +273,17 @@ export class RondevuAPI {
             createdAt: number;
         }>>;
     }> {
-        const url = since
-            ? `${this.baseUrl}/offers/poll?since=${since}`
-            : `${this.baseUrl}/offers/poll`;
+        const auth = await this.generateAuthParams('pollOffers', since?.toString() || '');
+        const url = new URL(`${this.baseUrl}/offers/poll`);
 
-        const response = await fetch(url, {
-            headers: this.getAuthHeader(),
-        })
+        if (since) {
+            url.searchParams.set('since', since.toString());
+        }
+        url.searchParams.set('username', auth.username);
+        url.searchParams.set('signature', auth.signature);
+        url.searchParams.set('message', auth.message);
+
+        const response = await fetch(url.toString())
 
         if (!response.ok) {
             const error = await response.json().catch(() => ({ error: 'Unknown error' }))
@@ -309,9 +297,13 @@ export class RondevuAPI {
      * Get answer for a specific offer (offerer polls this)
      */
     async getOfferAnswer(serviceFqn: string, offerId: string): Promise<{ sdp: string; offerId: string; answererId: string; answeredAt: number } | null> {
-        const response = await fetch(`${this.baseUrl}/services/${encodeURIComponent(serviceFqn)}/offers/${offerId}/answer`, {
-            headers: this.getAuthHeader(),
-        })
+        const auth = await this.generateAuthParams('getOfferAnswer', `${serviceFqn}:${offerId}`);
+        const url = new URL(`${this.baseUrl}/services/${encodeURIComponent(serviceFqn)}/offers/${offerId}/answer`);
+        url.searchParams.set('username', auth.username);
+        url.searchParams.set('signature', auth.signature);
+        url.searchParams.set('message', auth.message);
+
+        const response = await fetch(url.toString())
 
         if (!response.ok) {
             // 404 means not yet answered
@@ -329,9 +321,14 @@ export class RondevuAPI {
      * Search offers by topic
      */
     async searchOffers(topic: string): Promise<Offer[]> {
-        const response = await fetch(`${this.baseUrl}/offers?topic=${encodeURIComponent(topic)}`, {
-            headers: this.getAuthHeader(),
-        })
+        const auth = await this.generateAuthParams('searchOffers', topic);
+        const url = new URL(`${this.baseUrl}/offers`);
+        url.searchParams.set('topic', topic);
+        url.searchParams.set('username', auth.username);
+        url.searchParams.set('signature', auth.signature);
+        url.searchParams.set('message', auth.message);
+
+        const response = await fetch(url.toString())
 
         if (!response.ok) {
             const error = await response.json().catch(() => ({ error: 'Unknown error' }))
@@ -349,13 +346,14 @@ export class RondevuAPI {
      * Add ICE candidates to a specific offer
      */
     async addOfferIceCandidates(serviceFqn: string, offerId: string, candidates: RTCIceCandidateInit[]): Promise<{ count: number; offerId: string }> {
+        const auth = await this.generateAuthParams('addIceCandidates', `${serviceFqn}:${offerId}`);
+
         const response = await fetch(`${this.baseUrl}/services/${encodeURIComponent(serviceFqn)}/offers/${offerId}/ice-candidates`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                ...this.getAuthHeader(),
             },
-            body: JSON.stringify({ candidates }),
+            body: JSON.stringify({ candidates, ...auth }),
         })
 
         if (!response.ok) {
@@ -370,10 +368,14 @@ export class RondevuAPI {
      * Get ICE candidates for a specific offer (with polling support)
      */
     async getOfferIceCandidates(serviceFqn: string, offerId: string, since: number = 0): Promise<{ candidates: IceCandidate[]; offerId: string }> {
+        const auth = await this.generateAuthParams('getIceCandidates', `${serviceFqn}:${offerId}:${since}`);
         const url = new URL(`${this.baseUrl}/services/${encodeURIComponent(serviceFqn)}/offers/${offerId}/ice-candidates`)
         url.searchParams.set('since', since.toString())
+        url.searchParams.set('username', auth.username);
+        url.searchParams.set('signature', auth.signature);
+        url.searchParams.set('message', auth.message);
 
-        const response = await fetch(url.toString(), { headers: this.getAuthHeader() })
+        const response = await fetch(url.toString())
 
         if (!response.ok) {
             const error = await response.json().catch(() => ({ error: 'Unknown error' }))
@@ -396,13 +398,14 @@ export class RondevuAPI {
      * Service FQN must include username: service:version@username
      */
     async publishService(service: ServiceRequest): Promise<Service> {
+        const auth = await this.generateAuthParams('publishService', service.serviceFqn);
+
         const response = await fetch(`${this.baseUrl}/services`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                ...this.getAuthHeader(),
             },
-            body: JSON.stringify(service),
+            body: JSON.stringify({ ...service, username: auth.username }),
         })
 
         if (!response.ok) {
@@ -418,9 +421,13 @@ export class RondevuAPI {
      * Example: chat:1.0.0@alice
      */
     async getService(serviceFqn: string): Promise<{ serviceId: string; username: string; serviceFqn: string; offerId: string; sdp: string; createdAt: number; expiresAt: number }> {
-        const response = await fetch(`${this.baseUrl}/services/${encodeURIComponent(serviceFqn)}`, {
-            headers: this.getAuthHeader(),
-        })
+        const auth = await this.generateAuthParams('getService', serviceFqn);
+        const url = new URL(`${this.baseUrl}/services/${encodeURIComponent(serviceFqn)}`);
+        url.searchParams.set('username', auth.username);
+        url.searchParams.set('signature', auth.signature);
+        url.searchParams.set('message', auth.message);
+
+        const response = await fetch(url.toString())
 
         if (!response.ok) {
             const error = await response.json().catch(() => ({ error: 'Unknown error' }))
@@ -435,9 +442,13 @@ export class RondevuAPI {
      * Example: chat:1.0.0 (without @username)
      */
     async discoverService(serviceVersion: string): Promise<{ serviceId: string; username: string; serviceFqn: string; offerId: string; sdp: string; createdAt: number; expiresAt: number }> {
-        const response = await fetch(`${this.baseUrl}/services/${encodeURIComponent(serviceVersion)}`, {
-            headers: this.getAuthHeader(),
-        })
+        const auth = await this.generateAuthParams('discoverService', serviceVersion);
+        const url = new URL(`${this.baseUrl}/services/${encodeURIComponent(serviceVersion)}`);
+        url.searchParams.set('username', auth.username);
+        url.searchParams.set('signature', auth.signature);
+        url.searchParams.set('message', auth.message);
+
+        const response = await fetch(url.toString())
 
         if (!response.ok) {
             const error = await response.json().catch(() => ({ error: 'Unknown error' }))
@@ -452,13 +463,15 @@ export class RondevuAPI {
      * Example: chat:1.0.0 (without @username)
      */
     async discoverServices(serviceVersion: string, limit: number = 10, offset: number = 0): Promise<{ services: Array<{ serviceId: string; username: string; serviceFqn: string; offerId: string; sdp: string; createdAt: number; expiresAt: number }>; count: number; limit: number; offset: number }> {
+        const auth = await this.generateAuthParams('discoverServices', `${serviceVersion}:${limit}:${offset}`);
         const url = new URL(`${this.baseUrl}/services/${encodeURIComponent(serviceVersion)}`)
         url.searchParams.set('limit', limit.toString())
         url.searchParams.set('offset', offset.toString())
+        url.searchParams.set('username', auth.username);
+        url.searchParams.set('signature', auth.signature);
+        url.searchParams.set('message', auth.message);
 
-        const response = await fetch(url.toString(), {
-            headers: this.getAuthHeader(),
-        })
+        const response = await fetch(url.toString())
 
         if (!response.ok) {
             const error = await response.json().catch(() => ({ error: 'Unknown error' }))
@@ -502,7 +515,6 @@ export class RondevuAPI {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                ...this.getAuthHeader(),
             },
             body: JSON.stringify({
                 publicKey,
