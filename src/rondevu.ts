@@ -67,12 +67,10 @@ export interface OfferContext {
 export type OfferFactory = (rtcConfig: RTCConfiguration) => Promise<OfferContext>
 
 export interface PublishServiceOptions {
-    service?: string // Service name and version (e.g., "chat:2.0.0") - username will be auto-appended
-    serviceFqn?: string // Full service FQN (legacy, use 'service' instead)
-    maxOffers?: number  // Maximum number of concurrent offers to maintain (automatic mode)
-    offers?: Array<{ sdp: string }>  // Manual offers array (legacy mode)
+    service: string // Service name and version (e.g., "chat:2.0.0") - username will be auto-appended
+    maxOffers: number  // Maximum number of concurrent offers to maintain
     offerFactory?: OfferFactory  // Optional: custom offer creation (defaults to simple data channel)
-    ttl?: number  // Time-to-live for offers in milliseconds
+    ttl?: number  // Time-to-live for offers in milliseconds (default: 300000)
 }
 
 export interface ConnectionContext {
@@ -312,18 +310,10 @@ export class Rondevu {
     }
 
     /**
-     * Publish a service
+     * Publish a service with automatic offer management
+     * Call startFilling() to begin accepting connections
      *
-     * Two modes:
-     * 1. Automatic offer management (recommended):
-     *    Pass maxOffers and optionally offerFactory
-     *    Call startFilling() to begin accepting connections
-     *
-     * 2. Manual mode (legacy):
-     *    Pass offers array with pre-created SDP offers
-     *    Returns published service data
-     *
-     * @example Automatic mode:
+     * @example
      * ```typescript
      * await rondevu.publishService({
      *   service: 'chat:2.0.0',
@@ -331,50 +321,17 @@ export class Rondevu {
      * })
      * await rondevu.startFilling()
      * ```
-     *
-     * @example Manual mode (legacy):
-     * ```typescript
-     * const published = await rondevu.publishService({
-     *   serviceFqn: 'chat:2.0.0@alice',
-     *   offers: [{ sdp: offerSdp }]
-     * })
-     * ```
      */
-    async publishService(options: PublishServiceOptions): Promise<any> {
-        const { service, serviceFqn, maxOffers, offers, offerFactory, ttl } = options
+    async publishService(options: PublishServiceOptions): Promise<void> {
+        const { service, maxOffers, offerFactory, ttl } = options
 
-        // Manual mode (legacy) - publish pre-created offers
-        if (offers && offers.length > 0) {
-            const fqn = serviceFqn || `${service}@${this.username}`
-            const result = await this.api.publishService({
-                serviceFqn: fqn,
-                offers,
-                ttl: ttl || 300000,
-                signature: '',
-                message: '',
-            })
-            this.usernameClaimed = true
-            return result
-        }
+        this.currentService = service
+        this.maxOffers = maxOffers
+        this.offerFactory = offerFactory || this.defaultOfferFactory.bind(this)
+        this.ttl = ttl || 300000
 
-        // Automatic mode - store configuration for startFilling()
-        if (maxOffers !== undefined) {
-            const svc = service || serviceFqn?.split('@')[0]
-            if (!svc) {
-                throw new Error('Either service or serviceFqn must be provided')
-            }
-
-            this.currentService = svc
-            this.maxOffers = maxOffers
-            this.offerFactory = offerFactory || this.defaultOfferFactory.bind(this)
-            this.ttl = ttl || 300000
-
-            console.log(`[Rondevu] Publishing service: ${svc} with maxOffers: ${maxOffers}`)
-            this.usernameClaimed = true
-            return
-        }
-
-        throw new Error('Either maxOffers (automatic mode) or offers array (manual mode) must be provided')
+        console.log(`[Rondevu] Publishing service: ${service} with maxOffers: ${maxOffers}`)
+        this.usernameClaimed = true
     }
 
     /**

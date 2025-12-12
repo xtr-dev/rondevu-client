@@ -5,7 +5,6 @@
 
 export { Rondevu } from './rondevu.js'
 export { RondevuAPI } from './api.js'
-export { RondevuSignaler } from './rondevu-signaler.js'
 export { RpcBatcher } from './rpc-batcher.js'
 
 // Export crypto adapters
@@ -27,9 +26,14 @@ export type {
     IceCandidate,
 } from './api.js'
 
-export type { RondevuOptions, PublishServiceOptions } from './rondevu.js'
-
-export type { PollingConfig } from './rondevu-signaler.js'
+export type {
+    RondevuOptions,
+    PublishServiceOptions,
+    ConnectToServiceOptions,
+    ConnectionContext,
+    OfferContext,
+    OfferFactory
+} from './rondevu.js'
 
 export type { CryptoAdapter } from './crypto-adapter.js'
 

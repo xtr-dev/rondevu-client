@@ -38,14 +38,14 @@ npm install @xtr-dev/rondevu-client
 ```typescript
 import { Rondevu } from '@xtr-dev/rondevu-client'
 
-// 1. Connect to Rondevu with ICE server preset (generates keypair, username auto-claimed on first request)
+// 1. Connect to Rondevu (generates keypair, username auto-claimed on first request)
 const rondevu = await Rondevu.connect({
   apiUrl: 'https://api.ronde.vu',
   username: 'alice',  // Or omit for anonymous username
   iceServers: 'ipv4-turn'  // Use preset: 'ipv4-turn', 'hostname-turns', 'google-stun', or 'relay-only'
 })
 
-// 2. Publish service with custom offer factory for event handling
+// 2. Publish service
 await rondevu.publishService({
   service: 'chat:1.0.0',
   maxOffers: 5,  // Maintain up to 5 concurrent offers
@@ -70,7 +70,7 @@ await rondevu.publishService({
   ttl: 300000
 })
 
-// 3. Start accepting connections (auto-fills offers and polls)
+// 3. Start accepting connections
 await rondevu.startFilling()
 
 // 4. Stop when done
@@ -78,8 +78,6 @@ await rondevu.startFilling()
 ```
 
 ### Connecting to a Service (Answerer)
-
-**Automatic mode (recommended):**
 
 ```typescript
 import { Rondevu } from '@xtr-dev/rondevu-client'
@@ -91,7 +89,7 @@ const rondevu = await Rondevu.connect({
   iceServers: 'ipv4-turn'
 })
 
-// 2. Connect to service (automatic setup)
+// 2. Connect to service
 const connection = await rondevu.connectToService({
   serviceFqn: 'chat:1.0.0@alice',
   onConnection: ({ dc, peerUsername }) => {
@@ -110,81 +108,6 @@ const connection = await rondevu.connectToService({
 // Access connection
 connection.dc.send('Another message')
 connection.pc.close()  // Close when done
-```
-
-**Manual mode (legacy):**
-
-```typescript
-import { Rondevu } from '@xtr-dev/rondevu-client'
-
-// 1. Connect to Rondevu
-const rondevu = await Rondevu.connect({
-  apiUrl: 'https://api.ronde.vu',
-  username: 'bob',
-  iceServers: 'ipv4-turn'
-})
-
-// 2. Get service offer
-const serviceData = await rondevu.getService('chat:1.0.0@alice')
-
-// 3. Create peer connection
-const pc = new RTCPeerConnection({
-  iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-})
-
-// 4. Set remote offer and create answer
-await pc.setRemoteDescription({ type: 'offer', sdp: serviceData.sdp })
-
-const answer = await pc.createAnswer()
-await pc.setLocalDescription(answer)
-
-// 5. Send answer
-await rondevu.postOfferAnswer(
-  serviceData.serviceFqn,
-  serviceData.offerId,
-  answer.sdp
-)
-
-// 6. Send ICE candidates
-pc.onicecandidate = (event) => {
-  if (event.candidate) {
-    rondevu.addOfferIceCandidates(
-      serviceData.serviceFqn,
-      serviceData.offerId,
-      [event.candidate.toJSON()]
-    )
-  }
-}
-
-// 7. Poll for ICE candidates
-let lastIceTimestamp = 0
-const iceInterval = setInterval(async () => {
-  const result = await rondevu.getOfferIceCandidates(
-    serviceData.serviceFqn,
-    serviceData.offerId,
-    lastIceTimestamp
-  )
-
-  for (const item of result.candidates) {
-    if (item.candidate) {
-      await pc.addIceCandidate(new RTCIceCandidate(item.candidate))
-      lastIceTimestamp = item.createdAt
-    }
-  }
-}, 1000)
-
-// 8. Handle data channel
-pc.ondatachannel = (event) => {
-  const dc = event.channel
-
-  dc.onmessage = (event) => {
-    console.log('Received:', event.data)
-  }
-
-  dc.onopen = () => {
-    dc.send('Hello from Bob!')
-  }
-}
 ```
 
 ## API Reference
