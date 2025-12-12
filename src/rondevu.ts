@@ -1,4 +1,4 @@
-import { RondevuAPI, Keypair, Service, ServiceRequest, IceCandidate, BatcherOptions } from './api.js'
+import { RondevuAPI, Keypair, IceCandidate, BatcherOptions } from './api.js'
 import { CryptoAdapter } from './crypto-adapter.js'
 
 // ICE server preset names
