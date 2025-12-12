@@ -21,24 +21,16 @@ export interface PublishServiceOptions {
  * - Service discovery (direct, random, paginated)
  * - WebRTC signaling (offer/answer exchange, ICE relay)
  * - Keypair management
- * - Anonymous usage (auto-generates username and keypair)
  *
  * @example
  * ```typescript
- * // Option 1: Named user (manually claim username)
+ * // Create Rondevu instance with username
  * const rondevu = new Rondevu({
  *   apiUrl: 'https://signal.example.com',
  *   username: 'alice',
  * })
  * await rondevu.initialize()
- * await rondevu.claimUsername()  // Claim username once
- *
- * // Option 2: Anonymous user (auto-claims generated username)
- * const rondevu = new Rondevu({
- *   apiUrl: 'https://signal.example.com',
- *   // username omitted - will generate 'anon-xxxxx'
- * })
- * await rondevu.initialize()  // Auto-claims anonymous username
+ * await rondevu.claimUsername()  // Claim username before publishing
  *
  * // Publish a service
  * const publishedService = await rondevu.publishService({
@@ -89,7 +81,6 @@ export class Rondevu {
 
     /**
      * Initialize the service - generates keypair if not provided and creates API instance
-     * Auto-claims username for anonymous users
      * Call this before using other methods
      */
     async initialize(): Promise<void> {
@@ -107,18 +98,6 @@ export class Rondevu {
         // Create API instance with username and keypair
         this.api = new RondevuAPI(this.apiUrl, this.username, this.keypair)
         console.log('[Rondevu] Created API instance with username:', this.username)
-
-        // Auto-claim username for anonymous users
-        if (this.username.startsWith('anon-')) {
-            console.log('[Rondevu] Auto-claiming anonymous username:', this.username)
-            try {
-                await this.claimUsername()
-                console.log('[Rondevu] Successfully claimed anonymous username')
-            } catch (error) {
-                console.error('[Rondevu] Failed to claim anonymous username:', error)
-                // Don't throw - allow the user to continue, they just won't be able to publish services
-            }
-        }
     }
 
     // ============================================
