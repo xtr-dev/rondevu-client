@@ -56,6 +56,7 @@ export interface RondevuOptions {
     cryptoAdapter?: CryptoAdapter  // Optional, defaults to WebCryptoAdapter
     batching?: BatcherOptions | false  // Optional, defaults to enabled with default options
     iceServers?: IceServerPreset | RTCIceServer[]  // Optional: preset name or custom STUN/TURN servers
+    debug?: boolean  // Optional: enable debug logging (default: false)
 }
 
 export interface OfferContext {
@@ -165,6 +166,7 @@ export class Rondevu {
     private cryptoAdapter?: CryptoAdapter
     private batchingOptions?: BatcherOptions | false
     private iceServers: RTCIceServer[]
+    private debugEnabled: boolean
 
     // Service management
     private currentService: string | null = null
@@ -185,7 +187,8 @@ export class Rondevu {
         api: RondevuAPI,
         iceServers: RTCIceServer[],
         cryptoAdapter?: CryptoAdapter,
-        batchingOptions?: BatcherOptions | false
+        batchingOptions?: BatcherOptions | false,
+        debugEnabled = false
     ) {
         this.apiUrl = apiUrl
         this.username = username
@@ -194,13 +197,23 @@ export class Rondevu {
         this.iceServers = iceServers
         this.cryptoAdapter = cryptoAdapter
         this.batchingOptions = batchingOptions
+        this.debugEnabled = debugEnabled
 
-        console.log('[Rondevu] Instance created:', {
+        this.debug('Instance created:', {
             username: this.username,
             publicKey: this.keypair.publicKey,
             hasIceServers: iceServers.length > 0,
             batchingEnabled: batchingOptions !== false
         })
+    }
+
+    /**
+     * Internal debug logging - only logs if debug mode is enabled
+     */
+    private debug(message: string, ...args: any[]): void {
+        if (this.debugEnabled) {
+            console.log(`[Rondevu] ${message}`, ...args)
+        }
     }
 
     /**
@@ -227,21 +240,23 @@ export class Rondevu {
             ]
         }
 
-        console.log('[Rondevu] Connecting:', {
-            username,
-            hasKeypair: !!options.keypair,
-            iceServers: iceServers.length,
-            batchingEnabled: options.batching !== false
-        })
+        if (options.debug) {
+            console.log('[Rondevu] Connecting:', {
+                username,
+                hasKeypair: !!options.keypair,
+                iceServers: iceServers.length,
+                batchingEnabled: options.batching !== false
+            })
+        }
 
         // Generate keypair if not provided
         let keypair = options.keypair
         if (!keypair) {
-            console.log('[Rondevu] Generating new keypair...')
+            if (options.debug) console.log('[Rondevu] Generating new keypair...')
             keypair = await RondevuAPI.generateKeypair(options.cryptoAdapter)
-            console.log('[Rondevu] Generated keypair, publicKey:', keypair.publicKey)
+            if (options.debug) console.log('[Rondevu] Generated keypair, publicKey:', keypair.publicKey)
         } else {
-            console.log('[Rondevu] Using existing keypair, publicKey:', keypair.publicKey)
+            if (options.debug) console.log('[Rondevu] Using existing keypair, publicKey:', keypair.publicKey)
         }
 
         // Create API instance
@@ -252,7 +267,7 @@ export class Rondevu {
             options.cryptoAdapter,
             options.batching
         )
-        console.log('[Rondevu] Created API instance')
+        if (options.debug) console.log('[Rondevu] Created API instance')
 
         return new Rondevu(
             options.apiUrl,
@@ -261,7 +276,8 @@ export class Rondevu {
             api,
             iceServers,
             options.cryptoAdapter,
-            options.batching
+            options.batching,
+            options.debug || false
         )
     }
 
@@ -334,7 +350,7 @@ export class Rondevu {
         this.offerFactory = offerFactory || this.defaultOfferFactory.bind(this)
         this.ttl = ttl || Rondevu.DEFAULT_TTL_MS
 
-        console.log(`[Rondevu] Publishing service: ${service} with maxOffers: ${maxOffers}`)
+        this.debug(`Publishing service: ${service} with maxOffers: ${maxOffers}`)
         this.usernameClaimed = true
     }
 
@@ -350,7 +366,7 @@ export class Rondevu {
             iceServers: this.iceServers
         }
 
-        console.log('[Rondevu] Creating new offer...')
+        this.debug('Creating new offer...')
 
         // Create the offer using the factory
         const { pc, dc, offer } = await this.offerFactory(rtcConfig)
@@ -379,7 +395,7 @@ export class Rondevu {
             createdAt: Date.now()
         })
 
-        console.log(`[Rondevu] Offer created: ${offerId}`)
+        this.debug(`Offer created: ${offerId}`)
 
         // Set up ICE candidate handler
         pc.onicecandidate = async (event) => {
@@ -398,7 +414,7 @@ export class Rondevu {
 
         // Monitor connection state
         pc.onconnectionstatechange = () => {
-            console.log(`[Rondevu] Offer ${offerId} connection state: ${pc.connectionState}`)
+            this.debug(`Offer ${offerId} connection state: ${pc.connectionState}`)
 
             if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
                 this.activeOffers.delete(offerId)
@@ -416,7 +432,7 @@ export class Rondevu {
         const currentCount = this.activeOffers.size
         const needed = this.maxOffers - currentCount
 
-        console.log(`[Rondevu] Filling offers: current=${currentCount}, needed=${needed}`)
+        this.debug(`Filling offers: current=${currentCount}, needed=${needed}`)
 
         for (let i = 0; i < needed; i++) {
             try {
@@ -440,7 +456,7 @@ export class Rondevu {
             for (const answer of result.answers) {
                 const activeOffer = this.activeOffers.get(answer.offerId)
                 if (activeOffer && !activeOffer.answered) {
-                    console.log(`[Rondevu] Received answer for offer ${answer.offerId}`)
+                    this.debug(`Received answer for offer ${answer.offerId}`)
 
                     await activeOffer.pc.setRemoteDescription({
                         type: 'answer',
@@ -480,7 +496,7 @@ export class Rondevu {
      */
     async startFilling(): Promise<void> {
         if (this.filling) {
-            console.log('[Rondevu] Already filling')
+            this.debug('Already filling')
             return
         }
 
@@ -488,7 +504,7 @@ export class Rondevu {
             throw new Error('No service published. Call publishService() first.')
         }
 
-        console.log('[Rondevu] Starting offer filling and polling')
+        this.debug('Starting offer filling and polling')
         this.filling = true
 
         // Fill initial offers
@@ -505,7 +521,7 @@ export class Rondevu {
      * Closes all active peer connections
      */
     stopFilling(): void {
-        console.log('[Rondevu] Stopping offer filling and polling')
+        this.debug('Stopping offer filling and polling')
         this.filling = false
 
         // Stop polling
@@ -516,7 +532,7 @@ export class Rondevu {
 
         // Close all active connections
         for (const [offerId, offer] of this.activeOffers.entries()) {
-            console.log(`[Rondevu] Closing offer ${offerId}`)
+            this.debug(`Closing offer ${offerId}`)
             offer.dc?.close()
             offer.pc.close()
         }
@@ -571,18 +587,18 @@ export class Rondevu {
             fqn = `${service}@${username}`
         } else if (service) {
             // Discovery mode - get random service
-            console.log(`[Rondevu] Discovering service: ${service}`)
+            this.debug(`Discovering service: ${service}`)
             const discovered = await this.discoverService(service)
             fqn = discovered.serviceFqn
         } else {
             throw new Error('Either serviceFqn or service must be provided')
         }
 
-        console.log(`[Rondevu] Connecting to service: ${fqn}`)
+        this.debug(`Connecting to service: ${fqn}`)
 
         // 1. Get service offer
         const serviceData = await this.api.getService(fqn)
-        console.log(`[Rondevu] Found service from @${serviceData.username}`)
+        this.debug(`Found service from @${serviceData.username}`)
 
         // 2. Create RTCPeerConnection
         const rtcConfiguration = rtcConfig || {
@@ -594,7 +610,7 @@ export class Rondevu {
         let dc: RTCDataChannel | null = null
         const dataChannelPromise = new Promise<RTCDataChannel>((resolve) => {
             pc.ondatachannel = (event) => {
-                console.log('[Rondevu] Data channel received from offerer')
+                this.debug('Data channel received from offerer')
                 dc = event.channel
                 resolve(dc)
             }
@@ -664,7 +680,7 @@ export class Rondevu {
 
         // 9. Set up connection state monitoring
         pc.onconnectionstatechange = () => {
-            console.log(`[Rondevu] Connection state: ${pc.connectionState}`)
+            this.debug(`Connection state: ${pc.connectionState}`)
             if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
                 clearInterval(icePollInterval)
             }
@@ -672,14 +688,14 @@ export class Rondevu {
 
         // 10. Wait for data channel to open and call onConnection
         if (dc.readyState === 'open') {
-            console.log('[Rondevu] Data channel already open')
+            this.debug('Data channel already open')
             if (onConnection) {
                 await onConnection(context)
             }
         } else {
             await new Promise<void>((resolve) => {
                 dc!.addEventListener('open', async () => {
-                    console.log('[Rondevu] Data channel opened')
+                    this.debug('Data channel opened')
                     if (onConnection) {
                         await onConnection(context)
                     }
