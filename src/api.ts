@@ -398,14 +398,15 @@ export class RondevuAPI {
      * Service FQN must include username: service:version@username
      */
     async publishService(service: ServiceRequest): Promise<Service> {
-        const auth = await this.generateAuthParams('publishService', service.serviceFqn);
-
         const response = await fetch(`${this.baseUrl}/services`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ ...service, username: auth.username }),
+            body: JSON.stringify({
+                ...service,
+                username: this.username
+            }),
         })
 
         if (!response.ok) {
