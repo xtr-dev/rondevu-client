@@ -16,9 +16,9 @@ export type {
 export type {
     Keypair,
     OfferRequest,
-    Offer,
     ServiceRequest,
     Service,
+    ServiceOffer,
     IceCandidate,
 } from './api.js'
 

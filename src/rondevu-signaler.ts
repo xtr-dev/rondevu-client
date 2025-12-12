@@ -111,8 +111,7 @@ export class RondevuSignaler implements Signaler {
         }
 
         // Send answer to the service
-        const result = await this.rondevu.getAPIPublic().postOfferAnswer(this.serviceFqn, this.offerId, answer.sdp)
-        this.offerId = result.offerId
+        await this.rondevu.getAPIPublic().answerOffer(this.serviceFqn, this.offerId, answer.sdp)
         this.isOfferer = false
 
         // Start polling for ICE candidates (answerer uses separate endpoint)

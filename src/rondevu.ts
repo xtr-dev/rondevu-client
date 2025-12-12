@@ -114,22 +114,19 @@ export class Rondevu {
         }
 
         // Check if username is already claimed
-        const check = await this.getAPI().checkUsername(this.username)
-        if (!check.available) {
-            // Verify it's claimed by us
-            if (check.publicKey === this.keypair.publicKey) {
+        const available = await this.getAPI().isUsernameAvailable(this.username)
+        if (!available) {
+            // Check if it's claimed by us
+            const claimed = await this.getAPI().isUsernameClaimed()
+            if (claimed) {
                 this.usernameClaimed = true
                 return
             }
             throw new Error(`Username "${this.username}" is already claimed by another user`)
         }
 
-        // Generate signature for username claim
-        const message = `claim:${this.username}:${Date.now()}`
-        const signature = await RondevuAPI.signMessage(message, this.keypair.privateKey)
-
         // Claim the username
-        await this.getAPI().claimUsername(this.username, this.keypair.publicKey, signature, message)
+        await this.getAPI().claimUsername(this.username, this.keypair.publicKey)
         this.usernameClaimed = true
     }
 
@@ -152,19 +149,7 @@ export class Rondevu {
         }
 
         try {
-            const check = await this.getAPI().checkUsername(this.username)
-
-            // Debug logging
-            console.log('[Rondevu] Username check:', {
-                username: this.username,
-                available: check.available,
-                serverPublicKey: check.publicKey,
-                localPublicKey: this.keypair.publicKey,
-                match: check.publicKey === this.keypair.publicKey
-            })
-
-            // Username is claimed if it's not available and owned by our public key
-            const claimed = !check.available && check.publicKey === this.keypair.publicKey
+            const claimed = await this.getAPI().isUsernameClaimed()
 
             // Update internal flag to match server state
             this.usernameClaimed = claimed
@@ -246,7 +231,7 @@ export class Rondevu {
         createdAt: number
         expiresAt: number
     }> {
-        return await this.getAPI().discoverService(serviceVersion)
+        return await this.getAPI().getService(serviceVersion)
     }
 
     /**
@@ -267,7 +252,7 @@ export class Rondevu {
         limit: number
         offset: number
     }> {
-        return await this.getAPI().discoverServices(serviceVersion, limit, offset)
+        return await this.getAPI().getService(serviceVersion, { limit, offset })
     }
 
     // ============================================
@@ -281,7 +266,8 @@ export class Rondevu {
         success: boolean
         offerId: string
     }> {
-        return await this.getAPI().postOfferAnswer(serviceFqn, offerId, sdp)
+        await this.getAPI().answerOffer(serviceFqn, offerId, sdp)
+        return { success: true, offerId }
     }
 
     /**
