@@ -79,6 +79,8 @@ await rondevu.startFilling()
 
 ### Connecting to a Service (Answerer)
 
+**Automatic mode (recommended):**
+
 ```typescript
 import { Rondevu } from '@xtr-dev/rondevu-client'
 
@@ -86,13 +88,46 @@ import { Rondevu } from '@xtr-dev/rondevu-client'
 const rondevu = await Rondevu.connect({
   apiUrl: 'https://api.ronde.vu',
   username: 'bob',
-  iceServers: 'ipv4-turn'  // Use same preset as offerer
+  iceServers: 'ipv4-turn'
+})
+
+// 2. Connect to service (automatic setup)
+const connection = await rondevu.connectToService({
+  serviceFqn: 'chat:1.0.0@alice',
+  onConnection: ({ dc, peerUsername }) => {
+    console.log('Connected to', peerUsername)
+
+    dc.addEventListener('message', (e) => {
+      console.log('Received:', e.data)
+    })
+
+    dc.addEventListener('open', () => {
+      dc.send('Hello from Bob!')
+    })
+  }
+})
+
+// Access connection
+connection.dc.send('Another message')
+connection.pc.close()  // Close when done
+```
+
+**Manual mode (legacy):**
+
+```typescript
+import { Rondevu } from '@xtr-dev/rondevu-client'
+
+// 1. Connect to Rondevu
+const rondevu = await Rondevu.connect({
+  apiUrl: 'https://api.ronde.vu',
+  username: 'bob',
+  iceServers: 'ipv4-turn'
 })
 
 // 2. Get service offer
 const serviceData = await rondevu.getService('chat:1.0.0@alice')
 
-// 3. Create peer connection (use custom ICE servers if needed)
+// 3. Create peer connection
 const pc = new RTCPeerConnection({
   iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
 })

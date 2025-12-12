@@ -75,6 +75,22 @@ export interface PublishServiceOptions {
     ttl?: number  // Time-to-live for offers in milliseconds
 }
 
+export interface ConnectionContext {
+    pc: RTCPeerConnection
+    dc: RTCDataChannel
+    serviceFqn: string
+    offerId: string
+    peerUsername: string
+}
+
+export interface ConnectToServiceOptions {
+    serviceFqn?: string  // Full FQN like 'chat:2.0.0@alice'
+    service?: string     // Service without username (for discovery)
+    username?: string    // Target username (combined with service)
+    onConnection?: (context: ConnectionContext) => void | Promise<void>  // Called when data channel opens
+    rtcConfig?: RTCConfiguration  // Optional: override default ICE servers
+}
+
 interface ActiveOffer {
     offerId: string
     serviceFqn: string
@@ -545,6 +561,162 @@ export class Rondevu {
         }
 
         this.activeOffers.clear()
+    }
+
+    /**
+     * Automatically connect to a service (answerer side)
+     * Handles the entire connection flow: discovery, WebRTC setup, answer exchange, ICE candidates
+     *
+     * @example
+     * ```typescript
+     * // Connect to specific user
+     * const connection = await rondevu.connectToService({
+     *   serviceFqn: 'chat:2.0.0@alice',
+     *   onConnection: ({ dc, peerUsername }) => {
+     *     console.log('Connected to', peerUsername)
+     *     dc.addEventListener('message', (e) => console.log(e.data))
+     *     dc.addEventListener('open', () => dc.send('Hello!'))
+     *   }
+     * })
+     *
+     * // Discover random service
+     * const connection = await rondevu.connectToService({
+     *   service: 'chat:2.0.0',
+     *   onConnection: ({ dc, peerUsername }) => {
+     *     console.log('Connected to', peerUsername)
+     *   }
+     * })
+     * ```
+     */
+    async connectToService(options: ConnectToServiceOptions): Promise<ConnectionContext> {
+        const { serviceFqn, service, username, onConnection, rtcConfig } = options
+
+        // Determine the full service FQN
+        let fqn: string
+        if (serviceFqn) {
+            fqn = serviceFqn
+        } else if (service && username) {
+            fqn = `${service}@${username}`
+        } else if (service) {
+            // Discovery mode - get random service
+            console.log(`[Rondevu] Discovering service: ${service}`)
+            const discovered = await this.discoverService(service)
+            fqn = discovered.serviceFqn
+        } else {
+            throw new Error('Either serviceFqn or service must be provided')
+        }
+
+        console.log(`[Rondevu] Connecting to service: ${fqn}`)
+
+        // 1. Get service offer
+        const serviceData = await this.api.getService(fqn)
+        console.log(`[Rondevu] Found service from @${serviceData.username}`)
+
+        // 2. Create RTCPeerConnection
+        const rtcConfiguration = rtcConfig || {
+            iceServers: this.iceServers
+        }
+        const pc = new RTCPeerConnection(rtcConfiguration)
+
+        // 3. Set up data channel handler (answerer receives it from offerer)
+        let dc: RTCDataChannel | null = null
+        const dataChannelPromise = new Promise<RTCDataChannel>((resolve) => {
+            pc.ondatachannel = (event) => {
+                console.log('[Rondevu] Data channel received from offerer')
+                dc = event.channel
+                resolve(dc)
+            }
+        })
+
+        // 4. Set up ICE candidate exchange
+        pc.onicecandidate = async (event) => {
+            if (event.candidate) {
+                try {
+                    await this.api.addOfferIceCandidates(
+                        serviceData.serviceFqn,
+                        serviceData.offerId,
+                        [event.candidate.toJSON()]
+                    )
+                } catch (err) {
+                    console.error('[Rondevu] Failed to send ICE candidate:', err)
+                }
+            }
+        }
+
+        // 5. Poll for remote ICE candidates
+        let lastIceTimestamp = 0
+        const icePollInterval = setInterval(async () => {
+            try {
+                const result = await this.api.getOfferIceCandidates(
+                    serviceData.serviceFqn,
+                    serviceData.offerId,
+                    lastIceTimestamp
+                )
+                for (const item of result.candidates) {
+                    if (item.candidate) {
+                        await pc.addIceCandidate(new RTCIceCandidate(item.candidate))
+                        lastIceTimestamp = item.createdAt
+                    }
+                }
+            } catch (err) {
+                console.error('[Rondevu] Failed to poll ICE candidates:', err)
+            }
+        }, 1000)
+
+        // 6. Set remote description
+        await pc.setRemoteDescription({
+            type: 'offer',
+            sdp: serviceData.sdp
+        })
+
+        // 7. Create and send answer
+        const answer = await pc.createAnswer()
+        await pc.setLocalDescription(answer)
+        await this.api.answerOffer(
+            serviceData.serviceFqn,
+            serviceData.offerId,
+            answer.sdp!
+        )
+
+        // 8. Wait for data channel to be established
+        dc = await dataChannelPromise
+
+        // Create connection context
+        const context: ConnectionContext = {
+            pc,
+            dc,
+            serviceFqn: serviceData.serviceFqn,
+            offerId: serviceData.offerId,
+            peerUsername: serviceData.username
+        }
+
+        // 9. Set up connection state monitoring
+        pc.onconnectionstatechange = () => {
+            console.log(`[Rondevu] Connection state: ${pc.connectionState}`)
+            if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+                clearInterval(icePollInterval)
+            }
+        }
+
+        // 10. Wait for data channel to open and call onConnection
+        if (dc.readyState === 'open') {
+            console.log('[Rondevu] Data channel already open')
+            if (onConnection) {
+                await onConnection(context)
+            }
+        } else {
+            await new Promise<void>((resolve) => {
+                dc!.addEventListener('open', async () => {
+                    console.log('[Rondevu] Data channel opened')
+                    if (onConnection) {
+                        await onConnection(context)
+                    }
+                    resolve()
+                })
+            })
+        }
+
+        return context
     }
 
     // ============================================
