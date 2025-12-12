@@ -1,9 +1,11 @@
 import { RondevuAPI, Keypair, Service, ServiceRequest, IceCandidate } from './api.js'
+import { CryptoAdapter } from './crypto-adapter.js'
 
 export interface RondevuOptions {
     apiUrl: string
     username?: string  // Optional, will generate anonymous if not provided
     keypair?: Keypair  // Optional, will generate if not provided
+    cryptoAdapter?: CryptoAdapter  // Optional, defaults to WebCryptoAdapter
 }
 
 export interface PublishServiceOptions {
@@ -52,11 +54,13 @@ export class Rondevu {
     private username: string
     private keypair: Keypair | null = null
     private usernameClaimed = false
+    private cryptoAdapter?: CryptoAdapter
 
     constructor(options: RondevuOptions) {
         this.apiUrl = options.apiUrl
         this.username = options.username || this.generateAnonymousUsername()
         this.keypair = options.keypair || null
+        this.cryptoAdapter = options.cryptoAdapter
 
         console.log('[Rondevu] Constructor called:', {
             username: this.username,
@@ -89,14 +93,14 @@ export class Rondevu {
         // Generate keypair if not provided
         if (!this.keypair) {
             console.log('[Rondevu] Generating new keypair...')
-            this.keypair = await RondevuAPI.generateKeypair()
+            this.keypair = await RondevuAPI.generateKeypair(this.cryptoAdapter)
             console.log('[Rondevu] Generated keypair, publicKey:', this.keypair.publicKey)
         } else {
             console.log('[Rondevu] Using existing keypair, publicKey:', this.keypair.publicKey)
         }
 
-        // Create API instance with username and keypair
-        this.api = new RondevuAPI(this.apiUrl, this.username, this.keypair)
+        // Create API instance with username, keypair, and crypto adapter
+        this.api = new RondevuAPI(this.apiUrl, this.username, this.keypair, this.cryptoAdapter)
         console.log('[Rondevu] Created API instance with username:', this.username)
     }
 

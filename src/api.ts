@@ -2,17 +2,10 @@
  * Rondevu API Client - RPC interface
  */
 
-import * as ed25519 from '@noble/ed25519'
+import { CryptoAdapter, Keypair } from './crypto-adapter.js'
+import { WebCryptoAdapter } from './web-crypto-adapter.js'
 
-// Set SHA-512 hash function for ed25519 (required in @noble/ed25519 v3+)
-ed25519.hashes.sha512Async = async (message: Uint8Array) => {
-    return new Uint8Array(await crypto.subtle.digest('SHA-512', message as BufferSource))
-}
-
-export interface Keypair {
-    publicKey: string
-    privateKey: string
-}
+export type { Keypair } from './crypto-adapter.js'
 
 export interface OfferRequest {
     sdp: string
@@ -48,22 +41,6 @@ export interface IceCandidate {
 }
 
 /**
- * Helper: Convert Uint8Array to base64 string
- */
-function bytesToBase64(bytes: Uint8Array): string {
-    const binString = Array.from(bytes, byte => String.fromCodePoint(byte)).join('')
-    return btoa(binString)
-}
-
-/**
- * Helper: Convert base64 string to Uint8Array
- */
-function base64ToBytes(base64: string): Uint8Array {
-    const binString = atob(base64)
-    return Uint8Array.from(binString, char => char.codePointAt(0)!)
-}
-
-/**
  * RPC request format
  */
 interface RpcRequest {
@@ -87,11 +64,17 @@ interface RpcResponse {
  * RondevuAPI - RPC-based API client for Rondevu signaling server
  */
 export class RondevuAPI {
+    private crypto: CryptoAdapter
+
     constructor(
         private baseUrl: string,
         private username: string,
-        private keypair: Keypair
-    ) {}
+        private keypair: Keypair,
+        cryptoAdapter?: CryptoAdapter
+    ) {
+        // Use WebCryptoAdapter by default (browser environment)
+        this.crypto = cryptoAdapter || new WebCryptoAdapter()
+    }
 
     /**
      * Generate authentication parameters for RPC calls
@@ -105,7 +88,7 @@ export class RondevuAPI {
             ? `${method}:${this.username}:${params}:${timestamp}`
             : `${method}:${this.username}:${timestamp}`
 
-        const signature = await RondevuAPI.signMessage(message, this.keypair.privateKey)
+        const signature = await this.crypto.signMessage(message, this.keypair.privateKey)
 
         return { message, signature }
     }
@@ -163,47 +146,38 @@ export class RondevuAPI {
 
     /**
      * Generate an Ed25519 keypair for username claiming and service publishing
+     * @param cryptoAdapter - Optional crypto adapter (defaults to WebCryptoAdapter)
      */
-    static async generateKeypair(): Promise<Keypair> {
-        const privateKey = ed25519.utils.randomSecretKey()
-        const publicKey = await ed25519.getPublicKeyAsync(privateKey)
-
-        return {
-            publicKey: bytesToBase64(publicKey),
-            privateKey: bytesToBase64(privateKey),
-        }
+    static async generateKeypair(cryptoAdapter?: CryptoAdapter): Promise<Keypair> {
+        const adapter = cryptoAdapter || new WebCryptoAdapter()
+        return await adapter.generateKeypair()
     }
 
     /**
      * Sign a message with an Ed25519 private key
+     * @param cryptoAdapter - Optional crypto adapter (defaults to WebCryptoAdapter)
      */
-    static async signMessage(message: string, privateKeyBase64: string): Promise<string> {
-        const privateKey = base64ToBytes(privateKeyBase64)
-        const encoder = new TextEncoder()
-        const messageBytes = encoder.encode(message)
-        const signature = await ed25519.signAsync(messageBytes, privateKey)
-
-        return bytesToBase64(signature)
+    static async signMessage(
+        message: string,
+        privateKeyBase64: string,
+        cryptoAdapter?: CryptoAdapter
+    ): Promise<string> {
+        const adapter = cryptoAdapter || new WebCryptoAdapter()
+        return await adapter.signMessage(message, privateKeyBase64)
     }
 
     /**
      * Verify an Ed25519 signature
+     * @param cryptoAdapter - Optional crypto adapter (defaults to WebCryptoAdapter)
      */
     static async verifySignature(
         message: string,
         signatureBase64: string,
-        publicKeyBase64: string
+        publicKeyBase64: string,
+        cryptoAdapter?: CryptoAdapter
     ): Promise<boolean> {
-        try {
-            const signature = base64ToBytes(signatureBase64)
-            const publicKey = base64ToBytes(publicKeyBase64)
-            const encoder = new TextEncoder()
-            const messageBytes = encoder.encode(message)
-
-            return await ed25519.verifyAsync(signature, messageBytes, publicKey)
-        } catch {
-            return false
-        }
+        const adapter = cryptoAdapter || new WebCryptoAdapter()
+        return await adapter.verifySignature(message, signatureBase64, publicKeyBase64)
     }
 
     // ============================================

@@ -202,9 +202,62 @@ Main class for all Rondevu operations.
 import { Rondevu } from '@xtr-dev/rondevu-client'
 
 const rondevu = new Rondevu({
-  apiUrl: string,     // Signaling server URL
-  username?: string,  // Optional: your username (auto-generates anonymous if omitted)
-  keypair?: Keypair   // Optional: reuse existing keypair
+  apiUrl: string,          // Signaling server URL
+  username?: string,       // Optional: your username (auto-generates anonymous if omitted)
+  keypair?: Keypair,       // Optional: reuse existing keypair
+  cryptoAdapter?: CryptoAdapter  // Optional: platform-specific crypto (defaults to WebCryptoAdapter)
+})
+```
+
+#### Platform Support (Browser & Node.js)
+
+The client supports both browser and Node.js environments using crypto adapters:
+
+**Browser (default):**
+```typescript
+import { Rondevu } from '@xtr-dev/rondevu-client'
+
+// WebCryptoAdapter is used by default - no configuration needed
+const rondevu = new Rondevu({
+  apiUrl: 'https://api.ronde.vu',
+  username: 'alice'
+})
+```
+
+**Node.js (19+ or 18 with --experimental-global-webcrypto):**
+```typescript
+import { Rondevu, NodeCryptoAdapter } from '@xtr-dev/rondevu-client'
+
+const rondevu = new Rondevu({
+  apiUrl: 'https://api.ronde.vu',
+  username: 'alice',
+  cryptoAdapter: new NodeCryptoAdapter()
+})
+
+await rondevu.initialize()
+```
+
+**Note:** Node.js support requires:
+- Node.js 19+ (crypto.subtle available globally), OR
+- Node.js 18 with `--experimental-global-webcrypto` flag
+- WebRTC implementation like `wrtc` or `node-webrtc` for RTCPeerConnection
+
+**Custom Crypto Adapter:**
+```typescript
+import { CryptoAdapter, Keypair } from '@xtr-dev/rondevu-client'
+
+class CustomCryptoAdapter implements CryptoAdapter {
+  async generateKeypair(): Promise<Keypair> { /* ... */ }
+  async signMessage(message: string, privateKey: string): Promise<string> { /* ... */ }
+  async verifySignature(message: string, signature: string, publicKey: string): Promise<boolean> { /* ... */ }
+  bytesToBase64(bytes: Uint8Array): string { /* ... */ }
+  base64ToBytes(base64: string): Uint8Array { /* ... */ }
+  randomBytes(length: number): Uint8Array { /* ... */ }
+}
+
+const rondevu = new Rondevu({
+  apiUrl: 'https://api.ronde.vu',
+  cryptoAdapter: new CustomCryptoAdapter()
 })
 ```
 
