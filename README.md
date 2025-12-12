@@ -273,74 +273,6 @@ await rondevu.getOfferIceCandidates(
 ): Promise<{ candidates: IceCandidate[], offerId: string }>
 ```
 
-### RondevuSignaler Class
-
-Higher-level signaling abstraction with automatic polling and event listeners.
-
-```typescript
-import { RondevuSignaler } from '@xtr-dev/rondevu-client'
-
-const signaler = new RondevuSignaler(
-  rondevu: Rondevu,
-  service: string,      // Service FQN without username (e.g., 'chat:1.0.0')
-  host?: string,        // Optional: target username for answerer
-  pollingConfig?: {
-    initialInterval?: number      // Default: 500ms
-    maxInterval?: number           // Default: 5000ms
-    backoffMultiplier?: number     // Default: 1.5
-    maxRetries?: number            // Default: 50
-    jitter?: boolean               // Default: true
-  }
-)
-```
-
-#### Offerer Side
-
-```typescript
-// Set offer (automatically starts polling for answer and ICE)
-await signaler.setOffer(offer: RTCSessionDescriptionInit): Promise<void>
-
-// Listen for answer
-const unbind = signaler.addAnswerListener((answer) => {
-  console.log('Received answer:', answer)
-})
-
-// Listen for ICE candidates
-signaler.addListener((candidate) => {
-  console.log('Received ICE candidate:', candidate)
-})
-
-// Send ICE candidate
-await signaler.addIceCandidate(candidate: RTCIceCandidate): Promise<void>
-```
-
-#### Answerer Side
-
-```typescript
-// Listen for offer (automatically searches for service)
-const unbind = signaler.addOfferListener((offer) => {
-  console.log('Received offer:', offer)
-})
-
-// Set answer (automatically starts polling for ICE)
-await signaler.setAnswer(answer: RTCSessionDescriptionInit): Promise<void>
-
-// Send ICE candidate
-await signaler.addIceCandidate(candidate: RTCIceCandidate): Promise<void>
-
-// Listen for ICE candidates
-signaler.addListener((candidate) => {
-  console.log('Received ICE candidate:', candidate)
-})
-```
-
-#### Cleanup
-
-```typescript
-// Stop all polling and cleanup
-signaler.dispose(): void
-```
-
 ### RondevuAPI Class
 
 Low-level HTTP API client (used internally by Rondevu class).
@@ -416,14 +348,6 @@ interface IceCandidate {
   candidate: RTCIceCandidateInit
   createdAt: number
 }
-
-interface PollingConfig {
-  initialInterval?: number     // Default: 500ms
-  maxInterval?: number          // Default: 5000ms
-  backoffMultiplier?: number    // Default: 1.5
-  maxRetries?: number           // Default: 50
-  jitter?: boolean              // Default: true
-}
 ```
 
 ## Advanced Usage
@@ -442,8 +366,10 @@ console.log(rondevu.getUsername())  // e.g., "anon-lx2w34-a3f501"
 // Anonymous users behave exactly like regular users
 await rondevu.publishService({
   service: 'chat:1.0.0',
-  offers: [{ sdp: offerSdp }]
+  maxOffers: 5
 })
+
+await rondevu.startFilling()
 ```
 
 ### Persistent Keypair
@@ -510,23 +436,6 @@ const service = await rondevu.publishService({
 console.log(`Published ${service.offers.length} offers`)
 ```
 
-### Custom Polling Configuration
-
-```typescript
-const signaler = new RondevuSignaler(
-  rondevu,
-  'chat:1.0.0',
-  'alice',
-  {
-    initialInterval: 1000,    // Start at 1 second
-    maxInterval: 10000,       // Max 10 seconds
-    backoffMultiplier: 2,     // Double each time
-    maxRetries: 30,           // Stop after 30 retries
-    jitter: true              // Add randomness
-  }
-)
-```
-
 ## Platform Support
 
 ### Modern Browsers
@@ -588,13 +497,12 @@ const pc = new RTCPeerConnection(rtcConfig)
 const dc = pc.createDataChannel('chat')
 
 // Publish service (username auto-claimed on first publish)
-const offer = await pc.createOffer()
-await pc.setLocalDescription(offer)
-
 await rondevu.publishService({
   service: 'chat:1.0.0',
-  offers: [{ sdp: offer.sdp }]
+  maxOffers: 5
 })
+
+await rondevu.startFilling()
 
 // Browser clients can now discover and connect to chat:1.0.0@mybot
 ```
@@ -616,7 +524,8 @@ v0.4.0 removes high-level abstractions and uses manual WebRTC setup:
 
 **Added:**
 - `pollOffers()` - Combined polling for answers and ICE candidates
-- `RondevuSignaler` - Simplified signaling with automatic polling
+- `publishService()` - Automatic offer pool management
+- `connectToService()` - Automatic answering side setup
 
 **Migration Example:**
 
@@ -628,16 +537,13 @@ const host = new ServiceHost({
 })
 await host.start()
 
-// After (v0.4.0) - Manual setup
-const pc = new RTCPeerConnection()
-const dc = pc.createDataChannel('chat')
-const offer = await pc.createOffer()
-await pc.setLocalDescription(offer)
-
+// After (v0.4.0+) - Automatic setup
 await rondevu.publishService({
-  serviceFqn: 'chat:1.0.0@alice',
-  offers: [{ sdp: offer.sdp }]
+  service: 'chat:1.0.0',
+  maxOffers: 5
 })
+
+await rondevu.startFilling()
 ```
 
 ## License
