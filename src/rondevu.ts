@@ -355,6 +355,29 @@ export class Rondevu {
     }
 
     /**
+     * Set up ICE candidate handler to send candidates to the server
+     */
+    private setupIceCandidateHandler(
+        pc: RTCPeerConnection,
+        serviceFqn: string,
+        offerId: string
+    ): void {
+        pc.onicecandidate = async (event) => {
+            if (event.candidate) {
+                try {
+                    await this.api.addOfferIceCandidates(
+                        serviceFqn,
+                        offerId,
+                        [event.candidate.toJSON()]
+                    )
+                } catch (err) {
+                    console.error('[Rondevu] Failed to send ICE candidate:', err)
+                }
+            }
+        }
+    }
+
+    /**
      * Create a single offer and publish it to the server
      */
     private async createOffer(): Promise<void> {
@@ -398,19 +421,7 @@ export class Rondevu {
         this.debug(`Offer created: ${offerId}`)
 
         // Set up ICE candidate handler
-        pc.onicecandidate = async (event) => {
-            if (event.candidate) {
-                try {
-                    await this.api.addOfferIceCandidates(
-                        serviceFqn,
-                        offerId,
-                        [event.candidate.toJSON()]
-                    )
-                } catch (err) {
-                    console.error('[Rondevu] Failed to send ICE candidate:', err)
-                }
-            }
-        }
+        this.setupIceCandidateHandler(pc, serviceFqn, offerId)
 
         // Monitor connection state
         pc.onconnectionstatechange = () => {
@@ -617,19 +628,7 @@ export class Rondevu {
         })
 
         // 4. Set up ICE candidate exchange
-        pc.onicecandidate = async (event) => {
-            if (event.candidate) {
-                try {
-                    await this.api.addOfferIceCandidates(
-                        serviceData.serviceFqn,
-                        serviceData.offerId,
-                        [event.candidate.toJSON()]
-                    )
-                } catch (err) {
-                    console.error('[Rondevu] Failed to send ICE candidate:', err)
-                }
-            }
-        }
+        this.setupIceCandidateHandler(pc, serviceData.serviceFqn, serviceData.offerId)
 
         // 5. Poll for remote ICE candidates
         let lastIceTimestamp = 0
