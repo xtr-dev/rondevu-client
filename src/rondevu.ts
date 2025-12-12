@@ -824,7 +824,7 @@ export class Rondevu {
             answeredAt: number
         }>
         iceCandidates: Record<string, Array<{
-            candidate: any
+            candidate: RTCIceCandidateInit | null
             role: 'offerer' | 'answerer'
             peerId: string
             createdAt: number

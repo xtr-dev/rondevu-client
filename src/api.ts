@@ -38,7 +38,7 @@ export interface Service {
 }
 
 export interface IceCandidate {
-    candidate: RTCIceCandidateInit
+    candidate: RTCIceCandidateInit | null
     createdAt: number
 }
 
@@ -363,7 +363,7 @@ export class RondevuAPI {
         iceCandidates: Record<
             string,
             Array<{
-                candidate: any
+                candidate: RTCIceCandidateInit | null
                 role: 'offerer' | 'answerer'
                 peerId: string
                 createdAt: number
