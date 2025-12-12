@@ -548,6 +548,17 @@ export class Rondevu {
     async connectToService(options: ConnectToServiceOptions): Promise<ConnectionContext> {
         const { serviceFqn, service, username, onConnection, rtcConfig } = options
 
+        // Validate inputs
+        if (serviceFqn !== undefined && typeof serviceFqn === 'string' && !serviceFqn.trim()) {
+            throw new Error('serviceFqn cannot be empty')
+        }
+        if (service !== undefined && typeof service === 'string' && !service.trim()) {
+            throw new Error('service cannot be empty')
+        }
+        if (username !== undefined && typeof username === 'string' && !username.trim()) {
+            throw new Error('username cannot be empty')
+        }
+
         // Determine the full service FQN
         let fqn: string
         if (serviceFqn) {
