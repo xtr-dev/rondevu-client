@@ -414,9 +414,7 @@ const pc = new RTCPeerConnection()
 
 ### Node.js Service Host Example
 
-You can host WebRTC services in Node.js that browser clients can connect to. See the [Node.js Host Guide](https://github.com/xtr-dev/rondevu-demo/blob/main/NODE_HOST_GUIDE.md) for a complete guide.
-
-**Quick example:**
+You can host WebRTC services in Node.js that browser clients can connect to:
 
 ```typescript
 import { Rondevu, NodeCryptoAdapter } from '@xtr-dev/rondevu-client'
@@ -446,9 +444,7 @@ await rondevu.startFilling()
 // Browser clients can now discover and connect to chat:1.0.0@mybot
 ```
 
-See complete examples:
-- [Node.js Host Guide](https://github.com/xtr-dev/rondevu-demo/blob/main/NODE_HOST_GUIDE.md) - Full guide with complete examples
-- [test-connect.js](https://github.com/xtr-dev/rondevu-demo/blob/main/test-connect.js) - Working Node.js client example
+**See also:**
 - [React Demo](https://github.com/xtr-dev/rondevu-demo) - Complete browser UI ([live](https://ronde.vu))
 
 ---
