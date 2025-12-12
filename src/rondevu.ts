@@ -1,18 +1,87 @@
 import { RondevuAPI, Keypair, Service, ServiceRequest, IceCandidate, BatcherOptions } from './api.js'
 import { CryptoAdapter } from './crypto-adapter.js'
 
+// ICE server preset names
+export type IceServerPreset = 'ipv4-turn' | 'hostname-turns' | 'google-stun' | 'relay-only'
+
+// ICE server presets
+export const ICE_SERVER_PRESETS: Record<IceServerPreset, RTCIceServer[]> = {
+    'ipv4-turn': [
+        { urls: 'stun:57.129.61.67:3478' },
+        {
+            urls: [
+                'turn:57.129.61.67:3478?transport=tcp',
+                'turn:57.129.61.67:3478?transport=udp',
+            ],
+            username: 'webrtcuser',
+            credential: 'supersecretpassword'
+        }
+    ],
+    'hostname-turns': [
+        { urls: 'stun:turn.share.fish:3478' },
+        {
+            urls: [
+                'turns:turn.share.fish:5349?transport=tcp',
+                'turns:turn.share.fish:5349?transport=udp',
+                'turn:turn.share.fish:3478?transport=tcp',
+                'turn:turn.share.fish:3478?transport=udp',
+            ],
+            username: 'webrtcuser',
+            credential: 'supersecretpassword'
+        }
+    ],
+    'google-stun': [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' }
+    ],
+    'relay-only': [
+        { urls: 'stun:57.129.61.67:3478' },
+        {
+            urls: [
+                'turn:57.129.61.67:3478?transport=tcp',
+                'turn:57.129.61.67:3478?transport=udp',
+            ],
+            username: 'webrtcuser',
+            credential: 'supersecretpassword',
+            // @ts-expect-error - iceTransportPolicy is valid but not in RTCIceServer type
+            iceTransportPolicy: 'relay'
+        }
+    ]
+}
+
 export interface RondevuOptions {
     apiUrl: string
     username?: string  // Optional, will generate anonymous if not provided
     keypair?: Keypair  // Optional, will generate if not provided
     cryptoAdapter?: CryptoAdapter  // Optional, defaults to WebCryptoAdapter
     batching?: BatcherOptions | false  // Optional, defaults to enabled with default options
+    iceServers?: IceServerPreset | RTCIceServer[]  // Optional: preset name or custom STUN/TURN servers
 }
 
+export interface OfferContext {
+    pc: RTCPeerConnection
+    dc?: RTCDataChannel
+    offer: RTCSessionDescriptionInit
+}
+
+export type OfferFactory = (rtcConfig: RTCConfiguration) => Promise<OfferContext>
+
 export interface PublishServiceOptions {
-    service: string // Service name and version (e.g., "chat:2.0.0") - username will be auto-appended
-    offers: Array<{ sdp: string }>
-    ttl?: number
+    service?: string // Service name and version (e.g., "chat:2.0.0") - username will be auto-appended
+    serviceFqn?: string // Full service FQN (legacy, use 'service' instead)
+    maxOffers?: number  // Maximum number of concurrent offers to maintain (automatic mode)
+    offers?: Array<{ sdp: string }>  // Manual offers array (legacy mode)
+    offerFactory?: OfferFactory  // Optional: custom offer creation (defaults to simple data channel)
+    ttl?: number  // Time-to-live for offers in milliseconds
+}
+
+interface ActiveOffer {
+    offerId: string
+    serviceFqn: string
+    pc: RTCPeerConnection
+    dc?: RTCDataChannel
+    answered: boolean
+    createdAt: number
 }
 
 /**
@@ -27,24 +96,46 @@ export interface PublishServiceOptions {
  *
  * @example
  * ```typescript
- * // Create and initialize Rondevu instance
+ * // Create and initialize Rondevu instance with preset ICE servers
  * const rondevu = await Rondevu.connect({
  *   apiUrl: 'https://signal.example.com',
  *   username: 'alice',
+ *   iceServers: 'ipv4-turn'  // Use preset: 'ipv4-turn', 'hostname-turns', 'google-stun', or 'relay-only'
  * })
  *
- * // Publish a service (username auto-claimed on first publish)
- * const publishedService = await rondevu.publishService({
- *   service: 'chat:1.0.0',
- *   offers: [{ sdp: offerSdp }],
- *   ttl: 300000,
+ * // Or use custom ICE servers
+ * const rondevu2 = await Rondevu.connect({
+ *   apiUrl: 'https://signal.example.com',
+ *   username: 'bob',
+ *   iceServers: [
+ *     { urls: 'stun:stun.l.google.com:19302' },
+ *     { urls: 'turn:turn.example.com:3478', username: 'user', credential: 'pass' }
+ *   ]
  * })
  *
- * // Discover a service
- * const service = await rondevu.getService('chat:1.0.0@bob')
+ * // Publish a service with automatic offer management
+ * await rondevu.publishService({
+ *   service: 'chat:2.0.0',
+ *   maxOffers: 5,  // Maintain up to 5 concurrent offers
+ *   offerFactory: async (rtcConfig) => {
+ *     const pc = new RTCPeerConnection(rtcConfig)
+ *     const dc = pc.createDataChannel('chat')
+ *     const offer = await pc.createOffer()
+ *     await pc.setLocalDescription(offer)
+ *     return { pc, dc, offer }
+ *   }
+ * })
  *
- * // Post answer
- * await rondevu.postOfferAnswer(service.serviceFqn, service.offerId, answerSdp)
+ * // Start accepting connections (auto-fills offers and polls)
+ * await rondevu.startFilling()
+ *
+ * // Access active connections
+ * for (const offer of rondevu.getActiveOffers()) {
+ *   offer.dc?.addEventListener('message', (e) => console.log(e.data))
+ * }
+ *
+ * // Stop when done
+ * rondevu.stopFilling()
  * ```
  */
 export class Rondevu {
@@ -55,12 +146,26 @@ export class Rondevu {
     private usernameClaimed = false
     private cryptoAdapter?: CryptoAdapter
     private batchingOptions?: BatcherOptions | false
+    private iceServers: RTCIceServer[]
+
+    // Service management
+    private currentService: string | null = null
+    private maxOffers = 0
+    private offerFactory: OfferFactory | null = null
+    private ttl = 300000  // 5 minutes default
+    private activeOffers = new Map<string, ActiveOffer>()
+
+    // Polling
+    private filling = false
+    private pollingInterval: ReturnType<typeof setInterval> | null = null
+    private lastPollTimestamp = 0
 
     private constructor(
         apiUrl: string,
         username: string,
         keypair: Keypair,
         api: RondevuAPI,
+        iceServers: RTCIceServer[],
         cryptoAdapter?: CryptoAdapter,
         batchingOptions?: BatcherOptions | false
     ) {
@@ -68,12 +173,14 @@ export class Rondevu {
         this.username = username
         this.keypair = keypair
         this.api = api
+        this.iceServers = iceServers
         this.cryptoAdapter = cryptoAdapter
         this.batchingOptions = batchingOptions
 
         console.log('[Rondevu] Instance created:', {
             username: this.username,
             publicKey: this.keypair.publicKey,
+            hasIceServers: iceServers.length > 0,
             batchingEnabled: batchingOptions !== false
         })
     }
@@ -92,9 +199,20 @@ export class Rondevu {
     static async connect(options: RondevuOptions): Promise<Rondevu> {
         const username = options.username || Rondevu.generateAnonymousUsername()
 
+        // Handle preset string or custom array
+        let iceServers: RTCIceServer[]
+        if (typeof options.iceServers === 'string') {
+            iceServers = ICE_SERVER_PRESETS[options.iceServers]
+        } else {
+            iceServers = options.iceServers || [
+                { urls: 'stun:stun.l.google.com:19302' }
+            ]
+        }
+
         console.log('[Rondevu] Connecting:', {
             username,
             hasKeypair: !!options.keypair,
+            iceServers: iceServers.length,
             batchingEnabled: options.batching !== false
         })
 
@@ -123,6 +241,7 @@ export class Rondevu {
             username,
             keypair,
             api,
+            iceServers,
             options.cryptoAdapter,
             options.batching
         )
@@ -164,29 +283,268 @@ export class Rondevu {
     // ============================================
 
     /**
-     * Publish a service with automatic signature generation
-     * Username will be automatically claimed on first publish if not already claimed
+     * Default offer factory - creates a simple data channel connection
      */
-    async publishService(options: PublishServiceOptions): Promise<Service> {
-        const { service, offers, ttl } = options
+    private async defaultOfferFactory(rtcConfig: RTCConfiguration): Promise<OfferContext> {
+        const pc = new RTCPeerConnection(rtcConfig)
+        const dc = pc.createDataChannel('default')
+
+        const offer = await pc.createOffer()
+        await pc.setLocalDescription(offer)
+
+        return { pc, dc, offer }
+    }
+
+    /**
+     * Publish a service
+     *
+     * Two modes:
+     * 1. Automatic offer management (recommended):
+     *    Pass maxOffers and optionally offerFactory
+     *    Call startFilling() to begin accepting connections
+     *
+     * 2. Manual mode (legacy):
+     *    Pass offers array with pre-created SDP offers
+     *    Returns published service data
+     *
+     * @example Automatic mode:
+     * ```typescript
+     * await rondevu.publishService({
+     *   service: 'chat:2.0.0',
+     *   maxOffers: 5
+     * })
+     * await rondevu.startFilling()
+     * ```
+     *
+     * @example Manual mode (legacy):
+     * ```typescript
+     * const published = await rondevu.publishService({
+     *   serviceFqn: 'chat:2.0.0@alice',
+     *   offers: [{ sdp: offerSdp }]
+     * })
+     * ```
+     */
+    async publishService(options: PublishServiceOptions): Promise<any> {
+        const { service, serviceFqn, maxOffers, offers, offerFactory, ttl } = options
+
+        // Manual mode (legacy) - publish pre-created offers
+        if (offers && offers.length > 0) {
+            const fqn = serviceFqn || `${service}@${this.username}`
+            const result = await this.api.publishService({
+                serviceFqn: fqn,
+                offers,
+                ttl: ttl || 300000,
+                signature: '',
+                message: '',
+            })
+            this.usernameClaimed = true
+            return result
+        }
+
+        // Automatic mode - store configuration for startFilling()
+        if (maxOffers !== undefined) {
+            const svc = service || serviceFqn?.split('@')[0]
+            if (!svc) {
+                throw new Error('Either service or serviceFqn must be provided')
+            }
+
+            this.currentService = svc
+            this.maxOffers = maxOffers
+            this.offerFactory = offerFactory || this.defaultOfferFactory.bind(this)
+            this.ttl = ttl || 300000
+
+            console.log(`[Rondevu] Publishing service: ${svc} with maxOffers: ${maxOffers}`)
+            this.usernameClaimed = true
+            return
+        }
+
+        throw new Error('Either maxOffers (automatic mode) or offers array (manual mode) must be provided')
+    }
+
+    /**
+     * Create a single offer and publish it to the server
+     */
+    private async createOffer(): Promise<void> {
+        if (!this.currentService || !this.offerFactory) {
+            throw new Error('Service not published. Call publishService() first.')
+        }
+
+        const rtcConfig: RTCConfiguration = {
+            iceServers: this.iceServers
+        }
+
+        console.log('[Rondevu] Creating new offer...')
+
+        // Create the offer using the factory
+        const { pc, dc, offer } = await this.offerFactory(rtcConfig)
 
         // Auto-append username to service
-        const serviceFqn = `${service}@${this.username}`
+        const serviceFqn = `${this.currentService}@${this.username}`
 
-        // Publish to server (server will auto-claim username if needed)
-        // Note: signature and message are generated by the API layer
+        // Publish to server
         const result = await this.api.publishService({
             serviceFqn,
-            offers,
-            ttl,
-            signature: '', // Not used, generated by API layer
-            message: '',   // Not used, generated by API layer
+            offers: [{ sdp: offer.sdp! }],
+            ttl: this.ttl,
+            signature: '',
+            message: '',
         })
 
-        // Mark username as claimed after successful publish
-        this.usernameClaimed = true
+        const offerId = result.offers[0].offerId
 
-        return result
+        // Store active offer
+        this.activeOffers.set(offerId, {
+            offerId,
+            serviceFqn,
+            pc,
+            dc,
+            answered: false,
+            createdAt: Date.now()
+        })
+
+        console.log(`[Rondevu] Offer created: ${offerId}`)
+
+        // Set up ICE candidate handler
+        pc.onicecandidate = async (event) => {
+            if (event.candidate) {
+                try {
+                    await this.api.addOfferIceCandidates(
+                        serviceFqn,
+                        offerId,
+                        [event.candidate.toJSON()]
+                    )
+                } catch (err) {
+                    console.error('[Rondevu] Failed to send ICE candidate:', err)
+                }
+            }
+        }
+
+        // Monitor connection state
+        pc.onconnectionstatechange = () => {
+            console.log(`[Rondevu] Offer ${offerId} connection state: ${pc.connectionState}`)
+
+            if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+                this.activeOffers.delete(offerId)
+                this.fillOffers()  // Try to replace failed offer
+            }
+        }
+    }
+
+    /**
+     * Fill offers to reach maxOffers count
+     */
+    private async fillOffers(): Promise<void> {
+        if (!this.filling || !this.currentService) return
+
+        const currentCount = this.activeOffers.size
+        const needed = this.maxOffers - currentCount
+
+        console.log(`[Rondevu] Filling offers: current=${currentCount}, needed=${needed}`)
+
+        for (let i = 0; i < needed; i++) {
+            try {
+                await this.createOffer()
+            } catch (err) {
+                console.error('[Rondevu] Failed to create offer:', err)
+            }
+        }
+    }
+
+    /**
+     * Poll for answers and ICE candidates (internal use for automatic offer management)
+     */
+    private async pollInternal(): Promise<void> {
+        if (!this.filling) return
+
+        try {
+            const result = await this.api.poll(this.lastPollTimestamp)
+
+            // Process answers
+            for (const answer of result.answers) {
+                const activeOffer = this.activeOffers.get(answer.offerId)
+                if (activeOffer && !activeOffer.answered) {
+                    console.log(`[Rondevu] Received answer for offer ${answer.offerId}`)
+
+                    await activeOffer.pc.setRemoteDescription({
+                        type: 'answer',
+                        sdp: answer.sdp
+                    })
+
+                    activeOffer.answered = true
+                    this.lastPollTimestamp = answer.answeredAt
+
+                    // Create replacement offer
+                    this.fillOffers()
+                }
+            }
+
+            // Process ICE candidates
+            for (const [offerId, candidates] of Object.entries(result.iceCandidates)) {
+                const activeOffer = this.activeOffers.get(offerId)
+                if (activeOffer) {
+                    const answererCandidates = candidates.filter(c => c.role === 'answerer')
+
+                    for (const item of answererCandidates) {
+                        if (item.candidate) {
+                            await activeOffer.pc.addIceCandidate(new RTCIceCandidate(item.candidate))
+                            this.lastPollTimestamp = Math.max(this.lastPollTimestamp, item.createdAt)
+                        }
+                    }
+                }
+            }
+        } catch (err) {
+            console.error('[Rondevu] Polling error:', err)
+        }
+    }
+
+    /**
+     * Start filling offers and polling for answers/ICE
+     * Call this after publishService() to begin accepting connections
+     */
+    async startFilling(): Promise<void> {
+        if (this.filling) {
+            console.log('[Rondevu] Already filling')
+            return
+        }
+
+        if (!this.currentService) {
+            throw new Error('No service published. Call publishService() first.')
+        }
+
+        console.log('[Rondevu] Starting offer filling and polling')
+        this.filling = true
+
+        // Fill initial offers
+        await this.fillOffers()
+
+        // Start polling
+        this.pollingInterval = setInterval(() => {
+            this.pollInternal()
+        }, 1000)
+    }
+
+    /**
+     * Stop filling offers and polling
+     * Closes all active peer connections
+     */
+    stopFilling(): void {
+        console.log('[Rondevu] Stopping offer filling and polling')
+        this.filling = false
+
+        // Stop polling
+        if (this.pollingInterval) {
+            clearInterval(this.pollingInterval)
+            this.pollingInterval = null
+        }
+
+        // Close all active connections
+        for (const [offerId, offer] of this.activeOffers.entries()) {
+            console.log(`[Rondevu] Closing offer ${offerId}`)
+            offer.dc?.close()
+            offer.pc.close()
+        }
+
+        this.activeOffers.clear()
     }
 
     // ============================================
