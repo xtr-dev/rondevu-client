@@ -1,4 +1,4 @@
-import { RondevuAPI, Keypair, Service, ServiceRequest, IceCandidate } from './api.js'
+import { RondevuAPI, Keypair, Service, ServiceRequest, IceCandidate, BatcherOptions } from './api.js'
 import { CryptoAdapter } from './crypto-adapter.js'
 
 export interface RondevuOptions {
@@ -6,6 +6,7 @@ export interface RondevuOptions {
     username?: string  // Optional, will generate anonymous if not provided
     keypair?: Keypair  // Optional, will generate if not provided
     cryptoAdapter?: CryptoAdapter  // Optional, defaults to WebCryptoAdapter
+    batching?: BatcherOptions | false  // Optional, defaults to enabled with default options
 }
 
 export interface PublishServiceOptions {
@@ -55,17 +56,20 @@ export class Rondevu {
     private keypair: Keypair | null = null
     private usernameClaimed = false
     private cryptoAdapter?: CryptoAdapter
+    private batchingOptions?: BatcherOptions | false
 
     constructor(options: RondevuOptions) {
         this.apiUrl = options.apiUrl
         this.username = options.username || this.generateAnonymousUsername()
         this.keypair = options.keypair || null
         this.cryptoAdapter = options.cryptoAdapter
+        this.batchingOptions = options.batching
 
         console.log('[Rondevu] Constructor called:', {
             username: this.username,
             hasKeypair: !!this.keypair,
-            publicKey: this.keypair?.publicKey
+            publicKey: this.keypair?.publicKey,
+            batchingEnabled: options.batching !== false
         })
     }
 
@@ -99,8 +103,14 @@ export class Rondevu {
             console.log('[Rondevu] Using existing keypair, publicKey:', this.keypair.publicKey)
         }
 
-        // Create API instance with username, keypair, and crypto adapter
-        this.api = new RondevuAPI(this.apiUrl, this.username, this.keypair, this.cryptoAdapter)
+        // Create API instance with username, keypair, crypto adapter, and batching options
+        this.api = new RondevuAPI(
+            this.apiUrl,
+            this.username,
+            this.keypair,
+            this.cryptoAdapter,
+            this.batchingOptions
+        )
         console.log('[Rondevu] Created API instance with username:', this.username)
     }
 

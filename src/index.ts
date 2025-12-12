@@ -6,6 +6,7 @@
 export { Rondevu } from './rondevu.js'
 export { RondevuAPI } from './api.js'
 export { RondevuSignaler } from './rondevu-signaler.js'
+export { RpcBatcher } from './rpc-batcher.js'
 
 // Export crypto adapters
 export { WebCryptoAdapter } from './web-crypto-adapter.js'

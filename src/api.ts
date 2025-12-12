@@ -4,8 +4,10 @@
 
 import { CryptoAdapter, Keypair } from './crypto-adapter.js'
 import { WebCryptoAdapter } from './web-crypto-adapter.js'
+import { RpcBatcher, BatcherOptions } from './rpc-batcher.js'
 
 export type { Keypair } from './crypto-adapter.js'
+export type { BatcherOptions } from './rpc-batcher.js'
 
 export interface OfferRequest {
     sdp: string
@@ -65,15 +67,25 @@ interface RpcResponse {
  */
 export class RondevuAPI {
     private crypto: CryptoAdapter
+    private batcher: RpcBatcher | null = null
 
     constructor(
         private baseUrl: string,
         private username: string,
         private keypair: Keypair,
-        cryptoAdapter?: CryptoAdapter
+        cryptoAdapter?: CryptoAdapter,
+        batcherOptions?: BatcherOptions | false
     ) {
         // Use WebCryptoAdapter by default (browser environment)
         this.crypto = cryptoAdapter || new WebCryptoAdapter()
+
+        // Create batcher if not explicitly disabled
+        if (batcherOptions !== false) {
+            this.batcher = new RpcBatcher(
+                (requests) => this.rpcBatchDirect(requests),
+                batcherOptions
+            )
+        }
     }
 
     /**
@@ -94,9 +106,22 @@ export class RondevuAPI {
     }
 
     /**
-     * Execute RPC call
+     * Execute RPC call with optional batching
      */
     private async rpc(request: RpcRequest): Promise<any> {
+        // Use batcher if enabled
+        if (this.batcher) {
+            return await this.batcher.add(request)
+        }
+
+        // Direct call without batching
+        return await this.rpcDirect(request)
+    }
+
+    /**
+     * Execute single RPC call directly (bypasses batcher)
+     */
+    private async rpcDirect(request: RpcRequest): Promise<any> {
         const response = await fetch(`${this.baseUrl}/rpc`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -117,9 +142,9 @@ export class RondevuAPI {
     }
 
     /**
-     * Execute batch RPC calls
+     * Execute batch RPC calls directly (bypasses batcher)
      */
-    private async rpcBatch(requests: RpcRequest[]): Promise<any[]> {
+    private async rpcBatchDirect(requests: RpcRequest[]): Promise<any[]> {
         const response = await fetch(`${this.baseUrl}/rpc`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
