@@ -157,7 +157,21 @@ export class RondevuAPI {
 
         const results: RpcResponse[] = await response.json()
 
+        // Validate response is an array
+        if (!Array.isArray(results)) {
+            console.error('Invalid RPC batch response:', results)
+            throw new Error('Server returned invalid batch response (not an array)')
+        }
+
+        // Check response length matches request length
+        if (results.length !== requests.length) {
+            console.error(`Response length mismatch: expected ${requests.length}, got ${results.length}`)
+        }
+
         return results.map((result, i) => {
+            if (!result || typeof result !== 'object') {
+                throw new Error(`Invalid response at index ${i}`)
+            }
             if (!result.success) {
                 throw new Error(result.error || `RPC call ${i} failed`)
             }
@@ -221,20 +235,6 @@ export class RondevuAPI {
             params: { username },
         })
         return result.available
-    }
-
-    /**
-     * Claim a username
-     */
-    async claimUsername(username: string, publicKey: string): Promise<void> {
-        const auth = await this.generateAuth('claim', username)
-        await this.rpc({
-            method: 'claimUsername',
-            message: auth.message,
-            signature: auth.signature,
-            publicKey: this.keypair.publicKey,
-            params: { username, publicKey },
-        })
     }
 
     /**

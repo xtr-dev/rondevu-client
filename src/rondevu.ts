@@ -10,7 +10,7 @@ export interface RondevuOptions {
 }
 
 export interface PublishServiceOptions {
-    serviceFqn: string // Must include @username (e.g., "chat:1.0.0@alice")
+    service: string // Service name and version (e.g., "chat:2.0.0") - username will be auto-appended
     offers: Array<{ sdp: string }>
     ttl?: number
 }
@@ -19,7 +19,7 @@ export interface PublishServiceOptions {
  * Rondevu - Complete WebRTC signaling client
  *
  * Provides a unified API for:
- * - Username claiming with Ed25519 signatures
+ * - Implicit username claiming (auto-claimed on first authenticated request)
  * - Service publishing with automatic signature generation
  * - Service discovery (direct, random, paginated)
  * - WebRTC signaling (offer/answer exchange, ICE relay)
@@ -27,17 +27,15 @@ export interface PublishServiceOptions {
  *
  * @example
  * ```typescript
- * // Create Rondevu instance with username
- * const rondevu = new Rondevu({
+ * // Create and initialize Rondevu instance
+ * const rondevu = await Rondevu.connect({
  *   apiUrl: 'https://signal.example.com',
  *   username: 'alice',
  * })
- * await rondevu.initialize()
- * await rondevu.claimUsername()  // Claim username before publishing
  *
- * // Publish a service
+ * // Publish a service (username auto-claimed on first publish)
  * const publishedService = await rondevu.publishService({
- *   serviceFqn: 'chat:1.0.0@alice',
+ *   service: 'chat:1.0.0',
  *   offers: [{ sdp: offerSdp }],
  *   ttl: 300000,
  * })
@@ -50,33 +48,90 @@ export interface PublishServiceOptions {
  * ```
  */
 export class Rondevu {
-    private api: RondevuAPI | null = null
+    private api: RondevuAPI
     private readonly apiUrl: string
     private username: string
-    private keypair: Keypair | null = null
+    private keypair: Keypair
     private usernameClaimed = false
     private cryptoAdapter?: CryptoAdapter
     private batchingOptions?: BatcherOptions | false
 
-    constructor(options: RondevuOptions) {
-        this.apiUrl = options.apiUrl
-        this.username = options.username || this.generateAnonymousUsername()
-        this.keypair = options.keypair || null
-        this.cryptoAdapter = options.cryptoAdapter
-        this.batchingOptions = options.batching
+    private constructor(
+        apiUrl: string,
+        username: string,
+        keypair: Keypair,
+        api: RondevuAPI,
+        cryptoAdapter?: CryptoAdapter,
+        batchingOptions?: BatcherOptions | false
+    ) {
+        this.apiUrl = apiUrl
+        this.username = username
+        this.keypair = keypair
+        this.api = api
+        this.cryptoAdapter = cryptoAdapter
+        this.batchingOptions = batchingOptions
 
-        console.log('[Rondevu] Constructor called:', {
+        console.log('[Rondevu] Instance created:', {
             username: this.username,
-            hasKeypair: !!this.keypair,
-            publicKey: this.keypair?.publicKey,
+            publicKey: this.keypair.publicKey,
+            batchingEnabled: batchingOptions !== false
+        })
+    }
+
+    /**
+     * Create and initialize a Rondevu client
+     *
+     * @example
+     * ```typescript
+     * const rondevu = await Rondevu.connect({
+     *   apiUrl: 'https://api.ronde.vu',
+     *   username: 'alice'
+     * })
+     * ```
+     */
+    static async connect(options: RondevuOptions): Promise<Rondevu> {
+        const username = options.username || Rondevu.generateAnonymousUsername()
+
+        console.log('[Rondevu] Connecting:', {
+            username,
+            hasKeypair: !!options.keypair,
             batchingEnabled: options.batching !== false
         })
+
+        // Generate keypair if not provided
+        let keypair = options.keypair
+        if (!keypair) {
+            console.log('[Rondevu] Generating new keypair...')
+            keypair = await RondevuAPI.generateKeypair(options.cryptoAdapter)
+            console.log('[Rondevu] Generated keypair, publicKey:', keypair.publicKey)
+        } else {
+            console.log('[Rondevu] Using existing keypair, publicKey:', keypair.publicKey)
+        }
+
+        // Create API instance
+        const api = new RondevuAPI(
+            options.apiUrl,
+            username,
+            keypair,
+            options.cryptoAdapter,
+            options.batching
+        )
+        console.log('[Rondevu] Created API instance')
+
+        return new Rondevu(
+            options.apiUrl,
+            username,
+            keypair,
+            api,
+            options.cryptoAdapter,
+            options.batching
+        )
     }
 
     /**
      * Generate an anonymous username with timestamp and random component
      */
-    private generateAnonymousUsername(): string {
+    private static generateAnonymousUsername(): string {
         const timestamp = Date.now().toString(36)
         const random = Array.from(crypto.getRandomValues(new Uint8Array(3)))
             .map(b => b.toString(16).padStart(2, '0')).join('')
@@ -84,86 +139,15 @@ export class Rondevu {
     }
 
     // ============================================
-    // Initialization
-    // ============================================
-
-    /**
-     * Initialize the service - generates keypair if not provided and creates API instance
-     * Call this before using other methods
-     */
-    async initialize(): Promise<void> {
-        console.log('[Rondevu] Initialize called, hasKeypair:', !!this.keypair)
-
-        // Generate keypair if not provided
-        if (!this.keypair) {
-            console.log('[Rondevu] Generating new keypair...')
-            this.keypair = await RondevuAPI.generateKeypair(this.cryptoAdapter)
-            console.log('[Rondevu] Generated keypair, publicKey:', this.keypair.publicKey)
-        } else {
-            console.log('[Rondevu] Using existing keypair, publicKey:', this.keypair.publicKey)
-        }
-
-        // Create API instance with username, keypair, crypto adapter, and batching options
-        this.api = new RondevuAPI(
-            this.apiUrl,
-            this.username,
-            this.keypair,
-            this.cryptoAdapter,
-            this.batchingOptions
-        )
-        console.log('[Rondevu] Created API instance with username:', this.username)
-    }
-
-    // ============================================
     // Username Management
     // ============================================
-
-    /**
-     * Claim the username with Ed25519 signature
-     * Should be called once before publishing services
-     */
-    async claimUsername(): Promise<void> {
-        if (!this.keypair) {
-            throw new Error('Not initialized. Call initialize() first.')
-        }
-
-        // Check if username is already claimed
-        const available = await this.getAPI().isUsernameAvailable(this.username)
-        if (!available) {
-            // Check if it's claimed by us
-            const claimed = await this.getAPI().isUsernameClaimed()
-            if (claimed) {
-                this.usernameClaimed = true
-                return
-            }
-            throw new Error(`Username "${this.username}" is already claimed by another user`)
-        }
-
-        // Claim the username
-        await this.getAPI().claimUsername(this.username, this.keypair.publicKey)
-        this.usernameClaimed = true
-    }
-
-    /**
-     * Get API instance (creates lazily if needed)
-     */
-    private getAPI(): RondevuAPI {
-        if (!this.api) {
-            throw new Error('Not initialized. Call initialize() first.')
-        }
-        return this.api
-    }
 
     /**
      * Check if username has been claimed (checks with server)
      */
     async isUsernameClaimed(): Promise<boolean> {
-        if (!this.keypair) {
-            return false
-        }
-
         try {
-            const claimed = await this.getAPI().isUsernameClaimed()
+            const claimed = await this.api.isUsernameClaimed()
 
             // Update internal flag to match server state
             this.usernameClaimed = claimed
@@ -184,15 +168,14 @@ export class Rondevu {
      * Username will be automatically claimed on first publish if not already claimed
      */
     async publishService(options: PublishServiceOptions): Promise<Service> {
-        if (!this.keypair) {
-            throw new Error('Not initialized. Call initialize() first.')
-        }
+        const { service, offers, ttl } = options
 
-        const { serviceFqn, offers, ttl } = options
+        // Auto-append username to service
+        const serviceFqn = `${service}@${this.username}`
 
         // Publish to server (server will auto-claim username if needed)
         // Note: signature and message are generated by the API layer
-        const result = await this.getAPI().publishService({
+        const result = await this.api.publishService({
             serviceFqn,
             offers,
             ttl,
@@ -223,7 +206,7 @@ export class Rondevu {
         createdAt: number
         expiresAt: number
     }> {
-        return await this.getAPI().getService(serviceFqn)
+        return await this.api.getService(serviceFqn)
     }
 
     /**
@@ -239,7 +222,7 @@ export class Rondevu {
         createdAt: number
         expiresAt: number
     }> {
-        return await this.getAPI().getService(serviceVersion)
+        return await this.api.getService(serviceVersion)
     }
 
     /**
@@ -260,7 +243,7 @@ export class Rondevu {
         limit: number
         offset: number
     }> {
-        return await this.getAPI().getService(serviceVersion, { limit, offset })
+        return await this.api.getService(serviceVersion, { limit, offset })
     }
 
     // ============================================
@@ -274,7 +257,7 @@ export class Rondevu {
         success: boolean
         offerId: string
     }> {
-        await this.getAPI().answerOffer(serviceFqn, offerId, sdp)
+        await this.api.answerOffer(serviceFqn, offerId, sdp)
         return { success: true, offerId }
     }
 
@@ -287,7 +270,7 @@ export class Rondevu {
         answererId: string
         answeredAt: number
     } | null> {
-        return await this.getAPI().getOfferAnswer(serviceFqn, offerId)
+        return await this.api.getOfferAnswer(serviceFqn, offerId)
     }
 
     /**
@@ -309,7 +292,7 @@ export class Rondevu {
             createdAt: number
         }>>
     }> {
-        return await this.getAPI().poll(since)
+        return await this.api.poll(since)
     }
 
     /**
@@ -319,7 +302,7 @@ export class Rondevu {
         count: number
         offerId: string
     }> {
-        return await this.getAPI().addOfferIceCandidates(serviceFqn, offerId, candidates)
+        return await this.api.addOfferIceCandidates(serviceFqn, offerId, candidates)
     }
 
     /**
@@ -329,7 +312,7 @@ export class Rondevu {
         candidates: IceCandidate[]
         offerId: string
     }> {
-        return await this.getAPI().getOfferIceCandidates(serviceFqn, offerId, since)
+        return await this.api.getOfferIceCandidates(serviceFqn, offerId, since)
     }
 
     // ============================================
@@ -339,7 +322,7 @@ export class Rondevu {
     /**
      * Get the current keypair (for backup/storage)
      */
-    getKeypair(): Keypair | null {
+    getKeypair(): Keypair {
         return this.keypair
     }
 
@@ -353,8 +336,8 @@ export class Rondevu {
     /**
      * Get the public key
      */
-    getPublicKey(): string | null {
-        return this.keypair?.publicKey || null
+    getPublicKey(): string {
+        return this.keypair.publicKey
     }
 
     /**
@@ -362,9 +345,6 @@ export class Rondevu {
      * @deprecated Use direct methods on Rondevu instance instead
      */
     getAPIPublic(): RondevuAPI {
-        if (!this.api) {
-            throw new Error('Not initialized. Call initialize() first.')
-        }
         return this.api
     }
 }

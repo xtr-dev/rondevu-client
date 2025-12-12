@@ -38,18 +38,13 @@ npm install @xtr-dev/rondevu-client
 ```typescript
 import { Rondevu } from '@xtr-dev/rondevu-client'
 
-// 1. Initialize (with username or anonymous)
-const rondevu = new Rondevu({
+// 1. Connect to Rondevu (generates keypair, username auto-claimed on first request)
+const rondevu = await Rondevu.connect({
   apiUrl: 'https://api.ronde.vu',
   username: 'alice'  // Or omit for anonymous username
 })
 
-await rondevu.initialize()  // Generates keypair automatically
-
-// 2. Claim username (optional - anonymous users auto-claim)
-await rondevu.claimUsername()
-
-// 3. Create WebRTC offer
+// 2. Create WebRTC offer
 const pc = new RTCPeerConnection({
   iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
 })
@@ -61,7 +56,7 @@ await pc.setLocalDescription(offer)
 
 // 4. Publish service
 const service = await rondevu.publishService({
-  serviceFqn: 'chat:1.0.0@alice',
+  service: 'chat:1.0.0',
   offers: [{ sdp: offer.sdp }],
   ttl: 300000
 })
@@ -120,14 +115,11 @@ dc.onopen = () => {
 ```typescript
 import { Rondevu } from '@xtr-dev/rondevu-client'
 
-// 1. Initialize
-const rondevu = new Rondevu({
+// 1. Connect to Rondevu
+const rondevu = await Rondevu.connect({
   apiUrl: 'https://api.ronde.vu',
   username: 'bob'
 })
-
-await rondevu.initialize()
-await rondevu.claimUsername()
 
 // 2. Get service offer
 const serviceData = await rondevu.getService('chat:1.0.0@alice')
@@ -201,11 +193,13 @@ Main class for all Rondevu operations.
 ```typescript
 import { Rondevu } from '@xtr-dev/rondevu-client'
 
-const rondevu = new Rondevu({
+// Create and connect to Rondevu
+const rondevu = await Rondevu.connect({
   apiUrl: string,          // Signaling server URL
   username?: string,       // Optional: your username (auto-generates anonymous if omitted)
   keypair?: Keypair,       // Optional: reuse existing keypair
   cryptoAdapter?: CryptoAdapter  // Optional: platform-specific crypto (defaults to WebCryptoAdapter)
+  batching?: BatcherOptions | false  // Optional: RPC batching configuration
 })
 ```
 
@@ -218,7 +212,7 @@ The client supports both browser and Node.js environments using crypto adapters:
 import { Rondevu } from '@xtr-dev/rondevu-client'
 
 // WebCryptoAdapter is used by default - no configuration needed
-const rondevu = new Rondevu({
+const rondevu = await Rondevu.connect({
   apiUrl: 'https://api.ronde.vu',
   username: 'alice'
 })
@@ -228,13 +222,11 @@ const rondevu = new Rondevu({
 ```typescript
 import { Rondevu, NodeCryptoAdapter } from '@xtr-dev/rondevu-client'
 
-const rondevu = new Rondevu({
+const rondevu = await Rondevu.connect({
   apiUrl: 'https://api.ronde.vu',
   username: 'alice',
   cryptoAdapter: new NodeCryptoAdapter()
 })
-
-await rondevu.initialize()
 ```
 
 **Note:** Node.js support requires:
@@ -255,25 +247,17 @@ class CustomCryptoAdapter implements CryptoAdapter {
   randomBytes(length: number): Uint8Array { /* ... */ }
 }
 
-const rondevu = new Rondevu({
+const rondevu = await Rondevu.connect({
   apiUrl: 'https://api.ronde.vu',
   cryptoAdapter: new CustomCryptoAdapter()
 })
 ```
 
-#### Initialization
-
-```typescript
-// Initialize (generates keypair if not provided, auto-claims anonymous usernames)
-await rondevu.initialize(): Promise<void>
-```
-
 #### Username Management
 
-```typescript
-// Claim username with Ed25519 signature
-await rondevu.claimUsername(): Promise<void>
+Usernames are **automatically claimed** on the first authenticated request (like `publishService()`).
 
+```typescript
 // Check if username is claimed (checks server)
 await rondevu.isUsernameClaimed(): Promise<boolean>
 
@@ -281,10 +265,10 @@ await rondevu.isUsernameClaimed(): Promise<boolean>
 rondevu.getUsername(): string
 
 // Get public key
-rondevu.getPublicKey(): string | null
+rondevu.getPublicKey(): string
 
 // Get keypair (for backup/storage)
-rondevu.getKeypair(): Keypair | null
+rondevu.getKeypair(): Keypair
 ```
 
 #### Service Publishing
@@ -292,9 +276,9 @@ rondevu.getKeypair(): Keypair | null
 ```typescript
 // Publish service with offers
 await rondevu.publishService({
-  serviceFqn: string,  // e.g., 'chat:1.0.0@alice'
+  service: string,  // e.g., 'chat:1.0.0' (username auto-appended)
   offers: Array<{ sdp: string }>,
-  ttl?: number         // Optional: milliseconds (default: 300000)
+  ttl?: number      // Optional: milliseconds (default: 300000)
 }): Promise<Service>
 ```
 
@@ -452,13 +436,8 @@ await api.checkUsername(username: string): Promise<{
   expiresAt?: number
 }>
 
-// Claim username
-await api.claimUsername(
-  username: string,
-  publicKey: string,
-  signature: string,
-  message: string
-): Promise<{ success: boolean, username: string }>
+// Note: Username claiming is now implicit - usernames are auto-claimed
+// on first authenticated request to the server
 
 // ... (all other HTTP endpoints)
 ```
@@ -527,18 +506,16 @@ interface PollingConfig {
 
 ```typescript
 // Auto-generate anonymous username (format: anon-{timestamp}-{random})
-const rondevu = new Rondevu({
+const rondevu = await Rondevu.connect({
   apiUrl: 'https://api.ronde.vu'
   // No username provided - will generate anonymous username
 })
-
-await rondevu.initialize()  // Auto-claims anonymous username
 
 console.log(rondevu.getUsername())  // e.g., "anon-lx2w34-a3f501"
 
 // Anonymous users behave exactly like regular users
 await rondevu.publishService({
-  serviceFqn: `chat:1.0.0@${rondevu.getUsername()}`,
+  service: 'chat:1.0.0',
   offers: [{ sdp: offerSdp }]
 })
 ```
@@ -547,15 +524,12 @@ await rondevu.publishService({
 
 ```typescript
 // Save keypair and username to localStorage
-const rondevu = new Rondevu({
+const rondevu = await Rondevu.connect({
   apiUrl: 'https://api.ronde.vu',
   username: 'alice'
 })
 
-await rondevu.initialize()
-await rondevu.claimUsername()
-
-// Save for later
+// Save for later (username will be auto-claimed on first authenticated request)
 localStorage.setItem('rondevu-username', rondevu.getUsername())
 localStorage.setItem('rondevu-keypair', JSON.stringify(rondevu.getKeypair()))
 
@@ -563,13 +537,11 @@ localStorage.setItem('rondevu-keypair', JSON.stringify(rondevu.getKeypair()))
 const savedUsername = localStorage.getItem('rondevu-username')
 const savedKeypair = JSON.parse(localStorage.getItem('rondevu-keypair'))
 
-const rondevu2 = new Rondevu({
+const rondevu2 = await Rondevu.connect({
   apiUrl: 'https://api.ronde.vu',
   username: savedUsername,
   keypair: savedKeypair
 })
-
-await rondevu2.initialize()  // Reuses keypair
 ```
 
 ### Service Discovery
@@ -603,7 +575,7 @@ for (let i = 0; i < 5; i++) {
 }
 
 const service = await rondevu.publishService({
-  serviceFqn: 'chat:1.0.0@alice',
+  service: 'chat:1.0.0',
   offers,
   ttl: 300000
 })
@@ -666,7 +638,45 @@ const pc = new RTCPeerConnection()
 
 ## Examples
 
-See the [demo](https://github.com/xtr-dev/rondevu-demo) for a complete working example with React UI.
+### Node.js Service Host Example
+
+You can host WebRTC services in Node.js that browser clients can connect to. See the [Node.js Host Guide](../demo/NODE_HOST_GUIDE.md) for a complete guide.
+
+**Quick example:**
+
+```typescript
+import { Rondevu, NodeCryptoAdapter } from '@xtr-dev/rondevu-client'
+import wrtc from 'wrtc'
+
+const { RTCPeerConnection } = wrtc
+
+// Initialize with Node crypto adapter
+const rondevu = await Rondevu.connect({
+  apiUrl: 'https://api.ronde.vu',
+  username: 'mybot',
+  cryptoAdapter: new NodeCryptoAdapter()
+})
+
+// Create peer connection (offerer creates data channel)
+const pc = new RTCPeerConnection(rtcConfig)
+const dc = pc.createDataChannel('chat')
+
+// Publish service (username auto-claimed on first publish)
+const offer = await pc.createOffer()
+await pc.setLocalDescription(offer)
+
+await rondevu.publishService({
+  service: 'chat:1.0.0',
+  offers: [{ sdp: offer.sdp }]
+})
+
+// Browser clients can now discover and connect to chat:1.0.0@mybot
+```
+
+See complete examples:
+- [Node.js Host Guide](../demo/NODE_HOST_GUIDE.md) - Full guide with complete examples
+- [test-connect.js](../demo/test-connect.js) - Working Node.js client example
+- [React Demo](https://github.com/xtr-dev/rondevu-demo) - Complete browser UI ([live](https://ronde.vu))
 
 ## Migration from v0.3.x
 
