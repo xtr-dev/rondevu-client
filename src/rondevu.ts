@@ -153,6 +153,10 @@ interface ActiveOffer {
  * ```
  */
 export class Rondevu {
+    // Constants
+    private static readonly DEFAULT_TTL_MS = 300000  // 5 minutes
+    private static readonly POLLING_INTERVAL_MS = 1000  // 1 second
+
     private api: RondevuAPI
     private readonly apiUrl: string
     private username: string
@@ -166,7 +170,7 @@ export class Rondevu {
     private currentService: string | null = null
     private maxOffers = 0
     private offerFactory: OfferFactory | null = null
-    private ttl = 300000  // 5 minutes default
+    private ttl = Rondevu.DEFAULT_TTL_MS
     private activeOffers = new Map<string, ActiveOffer>()
 
     // Polling
@@ -328,7 +332,7 @@ export class Rondevu {
         this.currentService = service
         this.maxOffers = maxOffers
         this.offerFactory = offerFactory || this.defaultOfferFactory.bind(this)
-        this.ttl = ttl || 300000
+        this.ttl = ttl || Rondevu.DEFAULT_TTL_MS
 
         console.log(`[Rondevu] Publishing service: ${service} with maxOffers: ${maxOffers}`)
         this.usernameClaimed = true
@@ -493,7 +497,7 @@ export class Rondevu {
         // Start polling
         this.pollingInterval = setInterval(() => {
             this.pollInternal()
-        }, 1000)
+        }, Rondevu.POLLING_INTERVAL_MS)
     }
 
     /**
@@ -629,7 +633,7 @@ export class Rondevu {
             } catch (err) {
                 console.error('[Rondevu] Failed to poll ICE candidates:', err)
             }
-        }, 1000)
+        }, Rondevu.POLLING_INTERVAL_MS)
 
         // 6. Set remote description
         await pc.setRemoteDescription({
