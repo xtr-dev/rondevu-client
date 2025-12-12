@@ -223,42 +223,10 @@ export class RondevuAPI {
     }
 
     /**
-     * Get all answered offers (efficient batch polling for offerer)
-     */
-    async getAnsweredOffers(since?: number): Promise<{
-        offers: Array<{
-            offerId: string;
-            serviceId?: string;
-            answererId: string;
-            sdp: string;
-            answeredAt: number;
-        }>;
-    }> {
-        const auth = await this.generateAuthParams('getAnsweredOffers', since?.toString() || '');
-        const url = new URL(`${this.baseUrl}/offers/answered`);
-
-        if (since) {
-            url.searchParams.set('since', since.toString());
-        }
-        url.searchParams.set('username', auth.username);
-        url.searchParams.set('signature', auth.signature);
-        url.searchParams.set('message', auth.message);
-
-        const response = await fetch(url.toString())
-
-        if (!response.ok) {
-            const error = await response.json().catch(() => ({ error: 'Unknown error' }))
-            throw new Error(`Failed to get answered offers: ${error.error || response.statusText}`)
-        }
-
-        return await response.json()
-    }
-
-    /**
-     * Combined efficient polling for answers and ICE candidates
+     * Combined polling for answers and ICE candidates
      * Returns all answered offers and ICE candidates since timestamp
      */
-    async pollOffers(since?: number): Promise<{
+    async poll(since?: number): Promise<{
         answers: Array<{
             offerId: string;
             serviceId?: string;
@@ -273,8 +241,8 @@ export class RondevuAPI {
             createdAt: number;
         }>>;
     }> {
-        const auth = await this.generateAuthParams('pollOffers', since?.toString() || '');
-        const url = new URL(`${this.baseUrl}/offers/poll`);
+        const auth = await this.generateAuthParams('poll', since?.toString() || '');
+        const url = new URL(`${this.baseUrl}/poll`);
 
         if (since) {
             url.searchParams.set('since', since.toString());
@@ -287,7 +255,7 @@ export class RondevuAPI {
 
         if (!response.ok) {
             const error = await response.json().catch(() => ({ error: 'Unknown error' }))
-            throw new Error(`Failed to poll offers: ${error.error || response.statusText}`)
+            throw new Error(`Failed to poll: ${error.error || response.statusText}`)
         }
 
         return await response.json()

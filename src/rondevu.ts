@@ -297,26 +297,10 @@ export class Rondevu {
     }
 
     /**
-     * Get all answered offers (efficient batch polling for offerer)
-     * Returns all offers that have been answered since the given timestamp
-     */
-    async getAnsweredOffers(since?: number): Promise<{
-        offers: Array<{
-            offerId: string
-            serviceId?: string
-            answererId: string
-            sdp: string
-            answeredAt: number
-        }>
-    }> {
-        return await this.getAPI().getAnsweredOffers(since)
-    }
-
-    /**
-     * Combined efficient polling for answers and ICE candidates
+     * Combined polling for answers and ICE candidates
      * Returns all answered offers and ICE candidates for all peer's offers since timestamp
      */
-    async pollOffers(since?: number): Promise<{
+    async poll(since?: number): Promise<{
         answers: Array<{
             offerId: string
             serviceId?: string
@@ -331,7 +315,7 @@ export class Rondevu {
             createdAt: number
         }>>
     }> {
-        return await this.getAPI().pollOffers(since)
+        return await this.getAPI().poll(since)
     }
 
     /**

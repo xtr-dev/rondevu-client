@@ -245,7 +245,7 @@ export class RondevuSignaler implements Signaler {
 
     /**
      * Start combined polling for answers and ICE candidates (offerer side)
-     * Uses pollOffers() for efficient batch polling
+     * Uses poll() for efficient batch polling
      */
     private startPolling(): void {
         if (this.pollingTimeout || !this.isOfferer) {
@@ -258,7 +258,7 @@ export class RondevuSignaler implements Signaler {
 
         const poll = async () => {
             try {
-                const result = await this.rondevu.pollOffers(this.lastPollTimestamp)
+                const result = await this.rondevu.poll(this.lastPollTimestamp)
 
                 let foundActivity = false
 
