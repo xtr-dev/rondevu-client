@@ -168,12 +168,12 @@ const connection = await rondevu.connectToService({
 - Username rules and service FQN format
 - Examples and migration guides
 
-📖 **[Node.js Host Guide](../demo/NODE_HOST_GUIDE.md)** - Host services in Node.js
+📖 **[Node.js Host Guide](https://github.com/xtr-dev/rondevu-demo/blob/main/NODE_HOST_GUIDE.md)** - Host services in Node.js
 
 ## Examples
 
-- [Node.js Service Host](../demo/NODE_HOST_GUIDE.md) - Complete guide with examples
-- [test-connect.js](../demo/test-connect.js) - Working Node.js client example
+- [Node.js Service Host](https://github.com/xtr-dev/rondevu-demo/blob/main/NODE_HOST_GUIDE.md) - Complete guide with examples
+- [test-connect.js](https://github.com/xtr-dev/rondevu-demo/blob/main/test-connect.js) - Working Node.js client example
 - [React Demo](https://github.com/xtr-dev/rondevu-demo) - Full browser UI ([live](https://ronde.vu))
 
 ## License
