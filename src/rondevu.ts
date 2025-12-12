@@ -167,16 +167,11 @@ export class Rondevu {
 
     /**
      * Publish a service with automatic signature generation
+     * Username will be automatically claimed on first publish if not already claimed
      */
     async publishService(options: PublishServiceOptions): Promise<Service> {
         if (!this.keypair) {
             throw new Error('Not initialized. Call initialize() first.')
-        }
-
-        if (!this.usernameClaimed) {
-            throw new Error(
-                'Username not claimed. Call claimUsername() first or the server will reject the service.'
-            )
         }
 
         const { serviceFqn, offers, ttl } = options
@@ -194,8 +189,13 @@ export class Rondevu {
             ttl,
         }
 
-        // Publish to server
-        return await this.getAPI().publishService(serviceRequest)
+        // Publish to server (server will auto-claim username if needed)
+        const result = await this.getAPI().publishService(serviceRequest)
+
+        // Mark username as claimed after successful publish
+        this.usernameClaimed = true
+
+        return result
     }
 
     // ============================================

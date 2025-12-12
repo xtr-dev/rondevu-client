@@ -70,6 +70,7 @@ interface RpcRequest {
     method: string
     message: string
     signature: string
+    publicKey?: string
     params?: any
 }
 
@@ -232,6 +233,7 @@ export class RondevuAPI {
             method: 'claimUsername',
             message: auth.message,
             signature: auth.signature,
+            publicKey: this.keypair.publicKey,
             params: { username, publicKey },
         })
     }
@@ -263,6 +265,7 @@ export class RondevuAPI {
             method: 'publishService',
             message: auth.message,
             signature: auth.signature,
+            publicKey: this.keypair.publicKey,
             params: {
                 serviceFqn: service.serviceFqn,
                 offers: service.offers,
@@ -283,6 +286,7 @@ export class RondevuAPI {
             method: 'getService',
             message: auth.message,
             signature: auth.signature,
+            publicKey: this.keypair.publicKey,
             params: {
                 serviceFqn,
                 ...options,
@@ -299,6 +303,7 @@ export class RondevuAPI {
             method: 'deleteService',
             message: auth.message,
             signature: auth.signature,
+            publicKey: this.keypair.publicKey,
             params: { serviceFqn },
         })
     }
@@ -316,6 +321,7 @@ export class RondevuAPI {
             method: 'answerOffer',
             message: auth.message,
             signature: auth.signature,
+            publicKey: this.keypair.publicKey,
             params: { serviceFqn, offerId, sdp },
         })
     }
@@ -333,6 +339,7 @@ export class RondevuAPI {
                 method: 'getOfferAnswer',
                 message: auth.message,
                 signature: auth.signature,
+                publicKey: this.keypair.publicKey,
                 params: { serviceFqn, offerId },
             })
         } catch (err) {
@@ -369,6 +376,7 @@ export class RondevuAPI {
             method: 'poll',
             message: auth.message,
             signature: auth.signature,
+            publicKey: this.keypair.publicKey,
             params: { since },
         })
     }
@@ -386,6 +394,7 @@ export class RondevuAPI {
             method: 'addIceCandidates',
             message: auth.message,
             signature: auth.signature,
+            publicKey: this.keypair.publicKey,
             params: { serviceFqn, offerId, candidates },
         })
     }
@@ -403,6 +412,7 @@ export class RondevuAPI {
             method: 'getIceCandidates',
             message: auth.message,
             signature: auth.signature,
+            publicKey: this.keypair.publicKey,
             params: { serviceFqn, offerId, since },
         })
 
