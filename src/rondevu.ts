@@ -552,6 +552,57 @@ export class Rondevu {
     }
 
     /**
+     * Resolve the full service FQN from various input options
+     * Supports direct FQN, service+username, or service discovery
+     */
+    private async resolveServiceFqn(options: ConnectToServiceOptions): Promise<string> {
+        const { serviceFqn, service, username } = options
+
+        if (serviceFqn) {
+            return serviceFqn
+        } else if (service && username) {
+            return `${service}@${username}`
+        } else if (service) {
+            // Discovery mode - get random service
+            this.debug(`Discovering service: ${service}`)
+            const discovered = await this.discoverService(service)
+            return discovered.serviceFqn
+        } else {
+            throw new Error('Either serviceFqn or service must be provided')
+        }
+    }
+
+    /**
+     * Start polling for remote ICE candidates
+     * Returns the polling interval ID
+     */
+    private startIcePolling(
+        pc: RTCPeerConnection,
+        serviceFqn: string,
+        offerId: string
+    ): ReturnType<typeof setInterval> {
+        let lastIceTimestamp = 0
+
+        return setInterval(async () => {
+            try {
+                const result = await this.api.getOfferIceCandidates(
+                    serviceFqn,
+                    offerId,
+                    lastIceTimestamp
+                )
+                for (const item of result.candidates) {
+                    if (item.candidate) {
+                        await pc.addIceCandidate(new RTCIceCandidate(item.candidate))
+                        lastIceTimestamp = item.createdAt
+                    }
+                }
+            } catch (err) {
+                console.error('[Rondevu] Failed to poll ICE candidates:', err)
+            }
+        }, Rondevu.POLLING_INTERVAL_MS)
+    }
+
+    /**
      * Automatically connect to a service (answerer side)
      * Handles the entire connection flow: discovery, WebRTC setup, answer exchange, ICE candidates
      *
@@ -577,34 +628,21 @@ export class Rondevu {
      * ```
      */
     async connectToService(options: ConnectToServiceOptions): Promise<ConnectionContext> {
-        const { serviceFqn, service, username, onConnection, rtcConfig } = options
+        const { onConnection, rtcConfig } = options
 
         // Validate inputs
-        if (serviceFqn !== undefined && typeof serviceFqn === 'string' && !serviceFqn.trim()) {
+        if (options.serviceFqn !== undefined && typeof options.serviceFqn === 'string' && !options.serviceFqn.trim()) {
             throw new Error('serviceFqn cannot be empty')
         }
-        if (service !== undefined && typeof service === 'string' && !service.trim()) {
+        if (options.service !== undefined && typeof options.service === 'string' && !options.service.trim()) {
             throw new Error('service cannot be empty')
         }
-        if (username !== undefined && typeof username === 'string' && !username.trim()) {
+        if (options.username !== undefined && typeof options.username === 'string' && !options.username.trim()) {
             throw new Error('username cannot be empty')
         }
 
         // Determine the full service FQN
-        let fqn: string
-        if (serviceFqn) {
-            fqn = serviceFqn
-        } else if (service && username) {
-            fqn = `${service}@${username}`
-        } else if (service) {
-            // Discovery mode - get random service
-            this.debug(`Discovering service: ${service}`)
-            const discovered = await this.discoverService(service)
-            fqn = discovered.serviceFqn
-        } else {
-            throw new Error('Either serviceFqn or service must be provided')
-        }
-
+        const fqn = await this.resolveServiceFqn(options)
         this.debug(`Connecting to service: ${fqn}`)
 
         // 1. Get service offer
@@ -631,24 +669,7 @@ export class Rondevu {
         this.setupIceCandidateHandler(pc, serviceData.serviceFqn, serviceData.offerId)
 
         // 5. Poll for remote ICE candidates
-        let lastIceTimestamp = 0
-        const icePollInterval = setInterval(async () => {
-            try {
-                const result = await this.api.getOfferIceCandidates(
-                    serviceData.serviceFqn,
-                    serviceData.offerId,
-                    lastIceTimestamp
-                )
-                for (const item of result.candidates) {
-                    if (item.candidate) {
-                        await pc.addIceCandidate(new RTCIceCandidate(item.candidate))
-                        lastIceTimestamp = item.createdAt
-                    }
-                }
-            } catch (err) {
-                console.error('[Rondevu] Failed to poll ICE candidates:', err)
-            }
-        }, Rondevu.POLLING_INTERVAL_MS)
+        const icePollInterval = this.startIcePolling(pc, serviceData.serviceFqn, serviceData.offerId)
 
         // 6. Set remote description
         await pc.setRemoteDescription({
