@@ -57,6 +57,9 @@ export interface RondevuOptions {
     batching?: BatcherOptions | false  // Optional, defaults to enabled with default options
     iceServers?: IceServerPreset | RTCIceServer[]  // Optional: preset name or custom STUN/TURN servers
     debug?: boolean  // Optional: enable debug logging (default: false)
+    // WebRTC polyfills for Node.js environments (e.g., wrtc)
+    rtcPeerConnection?: typeof RTCPeerConnection
+    rtcIceCandidate?: typeof RTCIceCandidate
 }
 
 export interface OfferContext {
@@ -167,6 +170,8 @@ export class Rondevu {
     private batchingOptions?: BatcherOptions | false
     private iceServers: RTCIceServer[]
     private debugEnabled: boolean
+    private rtcPeerConnection?: typeof RTCPeerConnection
+    private rtcIceCandidate?: typeof RTCIceCandidate
 
     // Service management
     private currentService: string | null = null
@@ -188,7 +193,9 @@ export class Rondevu {
         iceServers: RTCIceServer[],
         cryptoAdapter?: CryptoAdapter,
         batchingOptions?: BatcherOptions | false,
-        debugEnabled = false
+        debugEnabled = false,
+        rtcPeerConnection?: typeof RTCPeerConnection,
+        rtcIceCandidate?: typeof RTCIceCandidate
     ) {
         this.apiUrl = apiUrl
         this.username = username
@@ -198,6 +205,8 @@ export class Rondevu {
         this.cryptoAdapter = cryptoAdapter
         this.batchingOptions = batchingOptions
         this.debugEnabled = debugEnabled
+        this.rtcPeerConnection = rtcPeerConnection
+        this.rtcIceCandidate = rtcIceCandidate
 
         this.debug('Instance created:', {
             username: this.username,
@@ -229,6 +238,14 @@ export class Rondevu {
      */
     static async connect(options: RondevuOptions): Promise<Rondevu> {
         const username = options.username || Rondevu.generateAnonymousUsername()
+
+        // Apply WebRTC polyfills to global scope if provided (Node.js environments)
+        if (options.rtcPeerConnection) {
+            globalThis.RTCPeerConnection = options.rtcPeerConnection as any
+        }
+        if (options.rtcIceCandidate) {
+            globalThis.RTCIceCandidate = options.rtcIceCandidate as any
+        }
 
         // Handle preset string or custom array
         let iceServers: RTCIceServer[]
@@ -277,7 +294,9 @@ export class Rondevu {
             iceServers,
             options.cryptoAdapter,
             options.batching,
-            options.debug || false
+            options.debug || false,
+            options.rtcPeerConnection,
+            options.rtcIceCandidate
         )
     }
 
