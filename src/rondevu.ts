@@ -365,10 +365,17 @@ export class Rondevu {
         pc.onicecandidate = async (event) => {
             if (event.candidate) {
                 try {
+                    // Handle both browser and Node.js (wrtc) environments
+                    // Browser: candidate.toJSON() exists
+                    // Node.js wrtc: candidate is already a plain object
+                    const candidateData = typeof event.candidate.toJSON === 'function'
+                        ? event.candidate.toJSON()
+                        : event.candidate
+
                     await this.api.addOfferIceCandidates(
                         serviceFqn,
                         offerId,
-                        [event.candidate.toJSON()]
+                        [candidateData]
                     )
                 } catch (err) {
                     console.error('[Rondevu] Failed to send ICE candidate:', err)
