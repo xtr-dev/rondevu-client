@@ -645,37 +645,23 @@ export class Rondevu extends EventEmitter {
         try {
             const result = await this.api.poll(this.lastPollTimestamp)
 
-            // Update timestamp FIRST to prevent re-fetching same answers if processing fails
-            if (result.answers.length > 0) {
-                const maxAnswerTimestamp = Math.max(...result.answers.map(a => a.answeredAt))
-                this.lastPollTimestamp = Math.max(this.lastPollTimestamp, maxAnswerTimestamp)
-            }
-
             // Process answers
             for (const answer of result.answers) {
                 const activeOffer = this.activeOffers.get(answer.offerId)
                 if (activeOffer && !activeOffer.answered) {
                     this.debug(`Received answer for offer ${answer.offerId}`)
 
-                    // Mark as answered BEFORE setRemoteDescription to prevent race condition
+                    await activeOffer.pc.setRemoteDescription({
+                        type: 'answer',
+                        sdp: answer.sdp
+                    })
+
                     activeOffer.answered = true
+                    this.lastPollTimestamp = answer.answeredAt
+                    this.emit('offer:answered', answer.offerId, answer.answererId)
 
-                    try {
-                        await activeOffer.pc.setRemoteDescription({
-                            type: 'answer',
-                            sdp: answer.sdp
-                        })
-
-                        this.emit('offer:answered', answer.offerId, answer.answererId)
-
-                        // Create replacement offer
-                        this.fillOffers()
-                    } catch (err) {
-                        // If setRemoteDescription fails, reset the answered flag
-                        activeOffer.answered = false
-                        this.debug(`Failed to set remote description for offer ${answer.offerId}:`, err)
-                        // Don't throw - continue processing other answers
-                    }
+                    // Create replacement offer
+                    this.fillOffers()
                 }
             }
 
