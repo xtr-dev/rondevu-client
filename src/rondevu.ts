@@ -63,12 +63,19 @@ export interface RondevuOptions {
 }
 
 export interface OfferContext {
-    pc: RTCPeerConnection
     dc?: RTCDataChannel
     offer: RTCSessionDescriptionInit
 }
 
-export type OfferFactory = (rtcConfig: RTCConfiguration) => Promise<OfferContext>
+/**
+ * Factory function for creating WebRTC offers.
+ * Rondevu creates the RTCPeerConnection and passes it to the factory,
+ * allowing ICE candidate handlers to be set up before setLocalDescription() is called.
+ *
+ * @param pc - The RTCPeerConnection created by Rondevu (already configured with ICE servers)
+ * @returns Promise containing the data channel (optional) and offer SDP
+ */
+export type OfferFactory = (pc: RTCPeerConnection) => Promise<OfferContext>
 
 export interface PublishServiceOptions {
     service: string // Service name and version (e.g., "chat:2.0.0") - username will be auto-appended
@@ -135,12 +142,12 @@ interface ActiveOffer {
  * await rondevu.publishService({
  *   service: 'chat:2.0.0',
  *   maxOffers: 5,  // Maintain up to 5 concurrent offers
- *   offerFactory: async (rtcConfig) => {
- *     const pc = new RTCPeerConnection(rtcConfig)
+ *   offerFactory: async (pc) => {
+ *     // pc is created by Rondevu with ICE handlers already attached
  *     const dc = pc.createDataChannel('chat')
  *     const offer = await pc.createOffer()
  *     await pc.setLocalDescription(offer)
- *     return { pc, dc, offer }
+ *     return { dc, offer }
  *   }
  * })
  *
@@ -337,15 +344,15 @@ export class Rondevu {
 
     /**
      * Default offer factory - creates a simple data channel connection
+     * The RTCPeerConnection is created by Rondevu and passed in
      */
-    private async defaultOfferFactory(rtcConfig: RTCConfiguration): Promise<OfferContext> {
-        const pc = new RTCPeerConnection(rtcConfig)
+    private async defaultOfferFactory(pc: RTCPeerConnection): Promise<OfferContext> {
         const dc = pc.createDataChannel('default')
 
         const offer = await pc.createOffer()
         await pc.setLocalDescription(offer)
 
-        return { pc, dc, offer }
+        return { dc, offer }
     }
 
     /**
@@ -415,23 +422,20 @@ export class Rondevu {
             iceServers: this.iceServers
         }
 
-        this.debug('Creating new offer...')
-
-        // Create the offer using the factory
-        // Note: The factory may call setLocalDescription() which triggers ICE gathering
-        const { pc, dc, offer } = await this.offerFactory(rtcConfig)
-
         // Auto-append username to service
         const serviceFqn = `${this.currentService}@${this.username}`
 
-        // Queue to buffer ICE candidates generated before we have the offerId
-        // This fixes the race condition where ICE candidates are lost because
-        // they're generated before we can set up the handler with the offerId
+        this.debug('Creating new offer...')
+
+        // 1. Create the RTCPeerConnection - Rondevu controls this to set up handlers early
+        const pc = new RTCPeerConnection(rtcConfig)
+
+        // 2. Set up ICE candidate handler with queuing BEFORE the factory runs
+        // This ensures we capture all candidates, even those generated immediately
+        // when setLocalDescription() is called in the factory
         const earlyIceCandidates: RTCIceCandidateInit[] = []
         let offerId: string | null = null
 
-        // Set up a queuing ICE candidate handler immediately after getting the pc
-        // This captures any candidates that fire before we have the offerId
         pc.onicecandidate = async (event) => {
             if (event.candidate) {
                 // Handle both browser and Node.js (wrtc) environments
@@ -454,7 +458,12 @@ export class Rondevu {
             }
         }
 
-        // Publish to server
+        // 3. Call the factory with the pc - factory creates data channel and offer
+        // When factory calls setLocalDescription(), ICE gathering starts and
+        // candidates are captured by the handler we set up above
+        const { dc, offer } = await this.offerFactory(pc)
+
+        // 4. Publish to server to get offerId
         const result = await this.api.publishService({
             serviceFqn,
             offers: [{ sdp: offer.sdp! }],
@@ -465,7 +474,7 @@ export class Rondevu {
 
         offerId = result.offers[0].offerId
 
-        // Store active offer
+        // 5. Store active offer
         this.activeOffers.set(offerId, {
             offerId,
             serviceFqn,
@@ -477,7 +486,7 @@ export class Rondevu {
 
         this.debug(`Offer created: ${offerId}`)
 
-        // Send any queued early ICE candidates
+        // 6. Send any queued early ICE candidates
         if (earlyIceCandidates.length > 0) {
             this.debug(`Sending ${earlyIceCandidates.length} early ICE candidates`)
             try {
@@ -487,7 +496,7 @@ export class Rondevu {
             }
         }
 
-        // Monitor connection state
+        // 7. Monitor connection state
         pc.onconnectionstatechange = () => {
             this.debug(`Offer ${offerId} connection state: ${pc.connectionState}`)
 
