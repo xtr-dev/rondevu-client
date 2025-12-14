@@ -259,6 +259,7 @@ export class Rondevu extends EventEmitter {
     private filling = false
     private pollingInterval: ReturnType<typeof setInterval> | null = null
     private lastPollTimestamp = 0
+    private isPolling = false  // Guard against concurrent poll execution
 
     private constructor(
         apiUrl: string,
@@ -634,6 +635,13 @@ export class Rondevu extends EventEmitter {
     private async pollInternal(): Promise<void> {
         if (!this.filling) return
 
+        // Prevent concurrent poll execution to avoid duplicate answer processing
+        if (this.isPolling) {
+            this.debug('Poll already in progress, skipping')
+            return
+        }
+
+        this.isPolling = true
         try {
             const result = await this.api.poll(this.lastPollTimestamp)
 
@@ -674,6 +682,8 @@ export class Rondevu extends EventEmitter {
             }
         } catch (err) {
             console.error('[Rondevu] Polling error:', err)
+        } finally {
+            this.isPolling = false
         }
     }
 
@@ -710,6 +720,7 @@ export class Rondevu extends EventEmitter {
     stopFilling(): void {
         this.debug('Stopping offer filling and polling')
         this.filling = false
+        this.isPolling = false  // Reset polling guard
 
         // Stop polling
         if (this.pollingInterval) {
