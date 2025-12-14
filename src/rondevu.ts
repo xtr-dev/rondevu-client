@@ -1,6 +1,9 @@
 import { RondevuAPI, Keypair, IceCandidate, BatcherOptions } from './api.js'
 import { CryptoAdapter } from './crypto-adapter.js'
 import { EventEmitter } from 'eventemitter3'
+import { OffererConnection } from './offerer-connection.js'
+import { AnswererConnection } from './answerer-connection.js'
+import { ConnectionConfig } from './connection-config.js'
 
 // ICE server preset names
 export type IceServerPreset = 'ipv4-turn' | 'hostname-turns' | 'google-stun' | 'relay-only'
@@ -83,6 +86,7 @@ export interface PublishServiceOptions {
     maxOffers: number  // Maximum number of concurrent offers to maintain
     offerFactory?: OfferFactory  // Optional: custom offer creation (defaults to simple data channel)
     ttl?: number  // Time-to-live for offers in milliseconds (default: 300000)
+    connectionConfig?: Partial<ConnectionConfig>  // Optional: connection durability configuration
 }
 
 export interface ConnectionContext {
@@ -97,8 +101,8 @@ export interface ConnectToServiceOptions {
     serviceFqn?: string  // Full FQN like 'chat:2.0.0@alice'
     service?: string     // Service without username (for discovery)
     username?: string    // Target username (combined with service)
-    onConnection?: (context: ConnectionContext) => void | Promise<void>  // Called when data channel opens
     rtcConfig?: RTCConfiguration  // Optional: override default ICE servers
+    connectionConfig?: Partial<ConnectionConfig>  // Optional: connection durability configuration
 }
 
 export interface ActiveOffer {
@@ -178,14 +182,13 @@ export class ConnectionError extends RondevuError {
 }
 
 /**
- * Rondevu - Complete WebRTC signaling client
+ * Rondevu - Complete WebRTC signaling client with durable connections
  *
- * Provides a unified API for:
- * - Implicit username claiming (auto-claimed on first authenticated request)
- * - Service publishing with automatic signature generation
- * - Service discovery (direct, random, paginated)
- * - WebRTC signaling (offer/answer exchange, ICE relay)
- * - Keypair management
+ * v1.0.0 introduces breaking changes:
+ * - connectToService() now returns AnswererConnection instead of ConnectionContext
+ * - Automatic reconnection and message buffering built-in
+ * - Connection objects expose .send() method instead of raw DataChannel
+ * - Rich event system for connection lifecycle (connected, disconnected, reconnecting, etc.)
  *
  * @example
  * ```typescript
@@ -196,39 +199,39 @@ export class ConnectionError extends RondevuError {
  *   iceServers: 'ipv4-turn'  // Use preset: 'ipv4-turn', 'hostname-turns', 'google-stun', or 'relay-only'
  * })
  *
- * // Or use custom ICE servers
- * const rondevu2 = await Rondevu.connect({
- *   apiUrl: 'https://signal.example.com',
- *   username: 'bob',
- *   iceServers: [
- *     { urls: 'stun:stun.l.google.com:19302' },
- *     { urls: 'turn:turn.example.com:3478', username: 'user', credential: 'pass' }
- *   ]
- * })
- *
  * // Publish a service with automatic offer management
  * await rondevu.publishService({
  *   service: 'chat:2.0.0',
- *   maxOffers: 5,  // Maintain up to 5 concurrent offers
- *   offerFactory: async (pc) => {
- *     // pc is created by Rondevu with ICE handlers already attached
- *     const dc = pc.createDataChannel('chat')
- *     const offer = await pc.createOffer()
- *     await pc.setLocalDescription(offer)
- *     return { dc, offer }
- *   }
+ *   maxOffers: 5  // Maintain up to 5 concurrent offers
  * })
  *
  * // Start accepting connections (auto-fills offers and polls)
  * await rondevu.startFilling()
  *
- * // Access active connections
- * for (const offer of rondevu.getActiveOffers()) {
- *   offer.dc?.addEventListener('message', (e) => console.log(e.data))
- * }
+ * // Listen for connections (v1.0.0 API)
+ * rondevu.on('connection:opened', (offerId, connection) => {
+ *   connection.on('connected', () => console.log('Connected!'))
+ *   connection.on('message', (data) => console.log('Received:', data))
+ *   connection.send('Hello!')
+ * })
  *
- * // Stop when done
- * rondevu.stopFilling()
+ * // Connect to a service (v1.0.0 - returns AnswererConnection)
+ * const connection = await rondevu.connectToService({
+ *   serviceFqn: 'chat:2.0.0@bob'
+ * })
+ *
+ * connection.on('connected', () => {
+ *   console.log('Connected!')
+ *   connection.send('Hello!')
+ * })
+ *
+ * connection.on('message', (data) => {
+ *   console.log('Received:', data)
+ * })
+ *
+ * connection.on('reconnecting', (attempt) => {
+ *   console.log(`Reconnecting, attempt ${attempt}`)
+ * })
  * ```
  */
 export class Rondevu extends EventEmitter {
@@ -253,13 +256,14 @@ export class Rondevu extends EventEmitter {
     private maxOffers = 0
     private offerFactory: OfferFactory | null = null
     private ttl = Rondevu.DEFAULT_TTL_MS
-    private activeOffers = new Map<string, ActiveOffer>()
+    private activeConnections = new Map<string, OffererConnection>()
+    private connectionConfig?: Partial<ConnectionConfig>
 
     // Polling
     private filling = false
+    private fillingSemaphore = false  // Semaphore to prevent concurrent fillOffers calls
     private pollingInterval: ReturnType<typeof setInterval> | null = null
     private lastPollTimestamp = 0
-    private isPolling = false  // Guard against concurrent poll execution
 
     private constructor(
         apiUrl: string,
@@ -433,62 +437,30 @@ export class Rondevu extends EventEmitter {
      * ```typescript
      * await rondevu.publishService({
      *   service: 'chat:2.0.0',
-     *   maxOffers: 5
+     *   maxOffers: 5,
+     *   connectionConfig: {
+     *     reconnectEnabled: true,
+     *     bufferEnabled: true
+     *   }
      * })
      * await rondevu.startFilling()
      * ```
      */
     async publishService(options: PublishServiceOptions): Promise<void> {
-        const { service, maxOffers, offerFactory, ttl } = options
+        const { service, maxOffers, offerFactory, ttl, connectionConfig } = options
 
         this.currentService = service
         this.maxOffers = maxOffers
         this.offerFactory = offerFactory || this.defaultOfferFactory.bind(this)
         this.ttl = ttl || Rondevu.DEFAULT_TTL_MS
+        this.connectionConfig = connectionConfig
 
         this.debug(`Publishing service: ${service} with maxOffers: ${maxOffers}`)
         this.usernameClaimed = true
     }
 
     /**
-     * Set up ICE candidate handler to send candidates to the server
-     *
-     * Note: This is used by connectToService() where the offerId is already known.
-     * For createOffer(), we use inline ICE handling with early candidate queuing
-     * since the offerId isn't available until after the factory completes.
-     */
-    private setupIceCandidateHandler(
-        pc: RTCPeerConnection,
-        serviceFqn: string,
-        offerId: string
-    ): void {
-        pc.onicecandidate = async (event) => {
-            if (event.candidate) {
-                try {
-                    // Handle both browser and Node.js (wrtc) environments
-                    // Browser: candidate.toJSON() exists
-                    // Node.js wrtc: candidate is already a plain object
-                    const candidateData = typeof event.candidate.toJSON === 'function'
-                        ? event.candidate.toJSON()
-                        : event.candidate
-
-                    // Emit local ICE candidate event
-                    this.emit('ice:candidate:local', offerId, candidateData)
-
-                    await this.api.addOfferIceCandidates(
-                        serviceFqn,
-                        offerId,
-                        [candidateData]
-                    )
-                } catch (err) {
-                    console.error('[Rondevu] Failed to send ICE candidate:', err)
-                }
-            }
-        }
-    }
-
-    /**
-     * Create a single offer and publish it to the server
+     * Create a single offer and publish it to the server using OffererConnection
      */
     private async createOffer(): Promise<void> {
         if (!this.currentService || !this.offerFactory) {
@@ -504,45 +476,10 @@ export class Rondevu extends EventEmitter {
 
         this.debug('Creating new offer...')
 
-        // 1. Create the RTCPeerConnection - Rondevu controls this to set up handlers early
+        // 1. Create RTCPeerConnection using factory (for now, keep compatibility)
         const pc = new RTCPeerConnection(rtcConfig)
 
-        // 2. Set up ICE candidate handler with queuing BEFORE the factory runs
-        // This ensures we capture all candidates, even those generated immediately
-        // when setLocalDescription() is called in the factory
-        const earlyIceCandidates: RTCIceCandidateInit[] = []
-        let offerId: string | undefined
-
-        pc.onicecandidate = async (event) => {
-            if (event.candidate) {
-                // Handle both browser and Node.js (wrtc) environments
-                const candidateData = typeof event.candidate.toJSON === 'function'
-                    ? event.candidate.toJSON()
-                    : event.candidate
-
-                // Emit local ICE candidate event
-                if (offerId) {
-                    this.emit('ice:candidate:local', offerId, candidateData)
-                }
-
-                if (offerId) {
-                    // We have the offerId, send directly
-                    try {
-                        await this.api.addOfferIceCandidates(serviceFqn, offerId, [candidateData])
-                    } catch (err) {
-                        console.error('[Rondevu] Failed to send ICE candidate:', err)
-                    }
-                } else {
-                    // Queue for later - we don't have the offerId yet
-                    this.debug('Queuing early ICE candidate')
-                    earlyIceCandidates.push(candidateData)
-                }
-            }
-        }
-
-        // 3. Call the factory with the pc - factory creates data channel and offer
-        // When factory calls setLocalDescription(), ICE gathering starts and
-        // candidates are captured by the handler we set up above
+        // 2. Call the factory to create offer
         let dc: RTCDataChannel | undefined
         let offer: RTCSessionDescriptionInit
         try {
@@ -550,12 +487,11 @@ export class Rondevu extends EventEmitter {
             dc = factoryResult.dc
             offer = factoryResult.offer
         } catch (err) {
-            // Clean up the connection if factory fails
             pc.close()
             throw err
         }
 
-        // 4. Publish to server to get offerId
+        // 3. Publish to server to get offerId
         const result = await this.api.publishService({
             serviceFqn,
             offers: [{ sdp: offer.sdp! }],
@@ -564,68 +500,77 @@ export class Rondevu extends EventEmitter {
             message: '',
         })
 
-        offerId = result.offers[0].offerId
+        const offerId = result.offers[0].offerId
 
-        // 5. Store active offer
-        this.activeOffers.set(offerId, {
-            offerId,
+        // 4. Create OffererConnection instance with already-created PC and DC
+        const connection = new OffererConnection({
+            api: this.api,
             serviceFqn,
-            pc,
-            dc,
-            answered: false,
-            createdAt: Date.now()
+            offerId,
+            pc,      // Pass the peer connection from factory
+            dc,      // Pass the data channel from factory
+            config: {
+                ...this.connectionConfig,
+                debug: this.debugEnabled,
+            },
         })
+
+        // Setup connection event handlers
+        connection.on('connected', () => {
+            this.debug(`Connection established for offer ${offerId}`)
+            this.emit('connection:opened', offerId, connection)
+        })
+
+        connection.on('failed', (error) => {
+            this.debug(`Connection failed for offer ${offerId}:`, error)
+            this.activeConnections.delete(offerId)
+            this.fillOffers()  // Replace failed offer
+        })
+
+        connection.on('closed', () => {
+            this.debug(`Connection closed for offer ${offerId}`)
+            this.activeConnections.delete(offerId)
+            this.fillOffers()  // Replace closed offer
+        })
+
+        // Store active connection
+        this.activeConnections.set(offerId, connection)
+
+        // Initialize the connection
+        await connection.initialize()
 
         this.debug(`Offer created: ${offerId}`)
         this.emit('offer:created', offerId, serviceFqn)
-
-        // Set up data channel open handler (offerer side)
-        if (dc) {
-            dc.onopen = () => {
-                this.debug(`Data channel opened for offer ${offerId}`)
-                this.emit('connection:opened', offerId, dc)
-            }
-        }
-
-        // 6. Send any queued early ICE candidates
-        if (earlyIceCandidates.length > 0) {
-            this.debug(`Sending ${earlyIceCandidates.length} early ICE candidates`)
-            try {
-                await this.api.addOfferIceCandidates(serviceFqn, offerId, earlyIceCandidates)
-            } catch (err) {
-                console.error('[Rondevu] Failed to send early ICE candidates:', err)
-            }
-        }
-
-        // 7. Monitor connection state
-        pc.onconnectionstatechange = () => {
-            this.debug(`Offer ${offerId} connection state: ${pc.connectionState}`)
-
-            if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
-                this.emit('connection:closed', offerId!)
-                this.activeOffers.delete(offerId!)
-                this.fillOffers()  // Try to replace failed offer
-            }
-        }
     }
 
     /**
-     * Fill offers to reach maxOffers count
+     * Fill offers to reach maxOffers count with semaphore protection
      */
     private async fillOffers(): Promise<void> {
         if (!this.filling || !this.currentService) return
 
-        const currentCount = this.activeOffers.size
-        const needed = this.maxOffers - currentCount
+        // Semaphore to prevent concurrent fills
+        if (this.fillingSemaphore) {
+            this.debug('fillOffers already in progress, skipping')
+            return
+        }
 
-        this.debug(`Filling offers: current=${currentCount}, needed=${needed}`)
+        this.fillingSemaphore = true
+        try {
+            const currentCount = this.activeConnections.size
+            const needed = this.maxOffers - currentCount
 
-        for (let i = 0; i < needed; i++) {
-            try {
-                await this.createOffer()
-            } catch (err) {
-                console.error('[Rondevu] Failed to create offer:', err)
+            this.debug(`Filling offers: current=${currentCount}, needed=${needed}`)
+
+            for (let i = 0; i < needed; i++) {
+                try {
+                    await this.createOffer()
+                } catch (err) {
+                    console.error('[Rondevu] Failed to create offer:', err)
+                }
             }
+        } finally {
+            this.fillingSemaphore = false
         }
     }
 
@@ -635,55 +580,26 @@ export class Rondevu extends EventEmitter {
     private async pollInternal(): Promise<void> {
         if (!this.filling) return
 
-        // Prevent concurrent poll execution to avoid duplicate answer processing
-        if (this.isPolling) {
-            this.debug('Poll already in progress, skipping')
-            return
-        }
-
-        this.isPolling = true
         try {
             const result = await this.api.poll(this.lastPollTimestamp)
 
-            // Process answers
+            // Process answers - delegate to OffererConnections
             for (const answer of result.answers) {
-                const activeOffer = this.activeOffers.get(answer.offerId)
-                if (activeOffer && !activeOffer.answered) {
-                    this.debug(`Received answer for offer ${answer.offerId}`)
+                const connection = this.activeConnections.get(answer.offerId)
+                if (connection) {
+                    try {
+                        await connection.processAnswer(answer.sdp, answer.answererId)
+                        this.lastPollTimestamp = Math.max(this.lastPollTimestamp, answer.answeredAt)
 
-                    await activeOffer.pc.setRemoteDescription({
-                        type: 'answer',
-                        sdp: answer.sdp
-                    })
-
-                    activeOffer.answered = true
-                    this.lastPollTimestamp = answer.answeredAt
-                    this.emit('offer:answered', answer.offerId, answer.answererId)
-
-                    // Create replacement offer
-                    this.fillOffers()
-                }
-            }
-
-            // Process ICE candidates
-            for (const [offerId, candidates] of Object.entries(result.iceCandidates)) {
-                const activeOffer = this.activeOffers.get(offerId)
-                if (activeOffer) {
-                    const answererCandidates = candidates.filter(c => c.role === 'answerer')
-
-                    for (const item of answererCandidates) {
-                        if (item.candidate) {
-                            this.emit('ice:candidate:remote', offerId, item.candidate, item.role)
-                            await activeOffer.pc.addIceCandidate(new RTCIceCandidate(item.candidate))
-                            this.lastPollTimestamp = Math.max(this.lastPollTimestamp, item.createdAt)
-                        }
+                        // Create replacement offer
+                        this.fillOffers()
+                    } catch (err) {
+                        this.debug(`Failed to process answer for offer ${answer.offerId}:`, err)
                     }
                 }
             }
         } catch (err) {
             console.error('[Rondevu] Polling error:', err)
-        } finally {
-            this.isPolling = false
         }
     }
 
@@ -720,7 +636,7 @@ export class Rondevu extends EventEmitter {
     stopFilling(): void {
         this.debug('Stopping offer filling and polling')
         this.filling = false
-        this.isPolling = false  // Reset polling guard
+        this.fillingSemaphore = false
 
         // Stop polling
         if (this.pollingInterval) {
@@ -729,13 +645,12 @@ export class Rondevu extends EventEmitter {
         }
 
         // Close all active connections
-        for (const [offerId, offer] of this.activeOffers.entries()) {
-            this.debug(`Closing offer ${offerId}`)
-            offer.dc?.close()
-            offer.pc.close()
+        for (const [offerId, connection] of this.activeConnections.entries()) {
+            this.debug(`Closing connection ${offerId}`)
+            connection.close()
         }
 
-        this.activeOffers.clear()
+        this.activeConnections.clear()
     }
 
     /**
@@ -743,17 +658,17 @@ export class Rondevu extends EventEmitter {
      * @returns Number of active offers
      */
     getOfferCount(): number {
-        return this.activeOffers.size
+        return this.activeConnections.size
     }
 
     /**
      * Check if an offer is currently connected
      * @param offerId - The offer ID to check
-     * @returns True if the offer exists and has been answered
+     * @returns True if the offer exists and is connected
      */
     isConnected(offerId: string): boolean {
-        const offer = this.activeOffers.get(offerId)
-        return offer ? offer.answered : false
+        const connection = this.activeConnections.get(offerId)
+        return connection ? connection.getState() === 'connected' : false
     }
 
     /**
@@ -762,12 +677,11 @@ export class Rondevu extends EventEmitter {
      */
     async disconnectAll(): Promise<void> {
         this.debug('Disconnecting all offers')
-        for (const [offerId, offer] of this.activeOffers.entries()) {
-            this.debug(`Closing offer ${offerId}`)
-            offer.dc?.close()
-            offer.pc.close()
+        for (const [offerId, connection] of this.activeConnections.entries()) {
+            this.debug(`Closing connection ${offerId}`)
+            connection.close()
         }
-        this.activeOffers.clear()
+        this.activeConnections.clear()
     }
 
     /**
@@ -777,7 +691,7 @@ export class Rondevu extends EventEmitter {
     getServiceStatus(): { active: boolean; offerCount: number; maxOffers: number; filling: boolean } {
         return {
             active: this.currentService !== null,
-            offerCount: this.activeOffers.size,
+            offerCount: this.activeConnections.size,
             maxOffers: this.maxOffers,
             filling: this.filling
         }
@@ -805,63 +719,43 @@ export class Rondevu extends EventEmitter {
     }
 
     /**
-     * Start polling for remote ICE candidates
-     * Returns the polling interval ID
-     */
-    private startIcePolling(
-        pc: RTCPeerConnection,
-        serviceFqn: string,
-        offerId: string
-    ): ReturnType<typeof setInterval> {
-        let lastIceTimestamp = 0
-
-        return setInterval(async () => {
-            try {
-                const result = await this.api.getOfferIceCandidates(
-                    serviceFqn,
-                    offerId,
-                    lastIceTimestamp
-                )
-                for (const item of result.candidates) {
-                    if (item.candidate) {
-                        this.emit('ice:candidate:remote', offerId, item.candidate, item.role)
-                        await pc.addIceCandidate(new RTCIceCandidate(item.candidate))
-                        lastIceTimestamp = item.createdAt
-                    }
-                }
-            } catch (err) {
-                console.error('[Rondevu] Failed to poll ICE candidates:', err)
-            }
-        }, Rondevu.POLLING_INTERVAL_MS)
-    }
-
-    /**
-     * Automatically connect to a service (answerer side)
-     * Handles the entire connection flow: discovery, WebRTC setup, answer exchange, ICE candidates
+     * Connect to a service (answerer side) - v1.0.0 API
+     * Returns an AnswererConnection with automatic reconnection and buffering
+     *
+     * BREAKING CHANGE: This now returns AnswererConnection instead of ConnectionContext
      *
      * @example
      * ```typescript
      * // Connect to specific user
      * const connection = await rondevu.connectToService({
      *   serviceFqn: 'chat:2.0.0@alice',
-     *   onConnection: ({ dc, peerUsername }) => {
-     *     console.log('Connected to', peerUsername)
-     *     dc.addEventListener('message', (e) => console.log(e.data))
-     *     dc.addEventListener('open', () => dc.send('Hello!'))
+     *   connectionConfig: {
+     *     reconnectEnabled: true,
+     *     bufferEnabled: true
      *   }
+     * })
+     *
+     * connection.on('connected', () => {
+     *   console.log('Connected!')
+     *   connection.send('Hello!')
+     * })
+     *
+     * connection.on('message', (data) => {
+     *   console.log('Received:', data)
+     * })
+     *
+     * connection.on('reconnecting', (attempt) => {
+     *   console.log(`Reconnecting, attempt ${attempt}`)
      * })
      *
      * // Discover random service
      * const connection = await rondevu.connectToService({
-     *   service: 'chat:2.0.0',
-     *   onConnection: ({ dc, peerUsername }) => {
-     *     console.log('Connected to', peerUsername)
-     *   }
+     *   service: 'chat:2.0.0'
      * })
      * ```
      */
-    async connectToService(options: ConnectToServiceOptions): Promise<ConnectionContext> {
-        const { onConnection, rtcConfig } = options
+    async connectToService(options: ConnectToServiceOptions): Promise<AnswererConnection> {
+        const { rtcConfig, connectionConfig } = options
 
         // Validate inputs
         if (options.serviceFqn !== undefined && typeof options.serviceFqn === 'string' && !options.serviceFqn.trim()) {
@@ -878,87 +772,32 @@ export class Rondevu extends EventEmitter {
         const fqn = await this.resolveServiceFqn(options)
         this.debug(`Connecting to service: ${fqn}`)
 
-        // 1. Get service offer
+        // Get service offer
         const serviceData = await this.api.getService(fqn)
         this.debug(`Found service from @${serviceData.username}`)
 
-        // 2. Create RTCPeerConnection
+        // Create RTCConfiguration
         const rtcConfiguration = rtcConfig || {
             iceServers: this.iceServers
         }
-        const pc = new RTCPeerConnection(rtcConfiguration)
 
-        // 3. Set up data channel handler (answerer receives it from offerer)
-        let dc: RTCDataChannel | null = null
-        const dataChannelPromise = new Promise<RTCDataChannel>((resolve) => {
-            pc.ondatachannel = (event) => {
-                this.debug('Data channel received from offerer')
-                dc = event.channel
-                this.emit('connection:opened', serviceData.offerId, dc)
-                resolve(dc)
-            }
-        })
-
-        // 4. Set up ICE candidate exchange
-        this.setupIceCandidateHandler(pc, serviceData.serviceFqn, serviceData.offerId)
-
-        // 5. Poll for remote ICE candidates
-        const icePollInterval = this.startIcePolling(pc, serviceData.serviceFqn, serviceData.offerId)
-
-        // 6. Set remote description
-        await pc.setRemoteDescription({
-            type: 'offer',
-            sdp: serviceData.sdp
-        })
-
-        // 7. Create and send answer
-        const answer = await pc.createAnswer()
-        await pc.setLocalDescription(answer)
-        await this.api.answerOffer(
-            serviceData.serviceFqn,
-            serviceData.offerId,
-            answer.sdp!
-        )
-
-        // 8. Wait for data channel to be established
-        dc = await dataChannelPromise
-
-        // Create connection context
-        const context: ConnectionContext = {
-            pc,
-            dc,
+        // Create AnswererConnection
+        const connection = new AnswererConnection({
+            api: this.api,
             serviceFqn: serviceData.serviceFqn,
             offerId: serviceData.offerId,
-            peerUsername: serviceData.username
-        }
+            offerSdp: serviceData.sdp,
+            rtcConfig: rtcConfiguration,
+            config: {
+                ...connectionConfig,
+                debug: this.debugEnabled,
+            },
+        })
 
-        // 9. Set up connection state monitoring
-        pc.onconnectionstatechange = () => {
-            this.debug(`Connection state: ${pc.connectionState}`)
-            if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
-                clearInterval(icePollInterval)
-            }
-        }
+        // Initialize the connection
+        await connection.initialize()
 
-        // 10. Wait for data channel to open and call onConnection
-        if (dc.readyState === 'open') {
-            this.debug('Data channel already open')
-            if (onConnection) {
-                await onConnection(context)
-            }
-        } else {
-            await new Promise<void>((resolve) => {
-                dc!.addEventListener('open', async () => {
-                    this.debug('Data channel opened')
-                    if (onConnection) {
-                        await onConnection(context)
-                    }
-                    resolve()
-                })
-            })
-        }
-
-        return context
+        return connection
     }
 
     // ============================================
@@ -967,8 +806,6 @@ export class Rondevu extends EventEmitter {
 
     /**
      * Find a service - unified discovery method
-     *
-     * Replaces getService(), discoverService(), and discoverServices() with a single method.
      *
      * @param serviceFqn - Service identifier (e.g., 'chat:1.0.0' or 'chat:1.0.0@alice')
      * @param options - Discovery options
@@ -1099,6 +936,36 @@ export class Rondevu extends EventEmitter {
      */
     getPublicKey(): string {
         return this.keypair.publicKey
+    }
+
+    /**
+     * Get active connections (for offerer side)
+     */
+    getActiveConnections(): Map<string, OffererConnection> {
+        return this.activeConnections
+    }
+
+    /**
+     * Get all active offers (legacy compatibility)
+     * @deprecated Use getActiveConnections() instead
+     */
+    getActiveOffers(): ActiveOffer[] {
+        const offers: ActiveOffer[] = []
+        for (const [offerId, connection] of this.activeConnections.entries()) {
+            const pc = connection.getPeerConnection()
+            const dc = connection.getDataChannel()
+            if (pc) {
+                offers.push({
+                    offerId,
+                    serviceFqn: this.currentService ? `${this.currentService}@${this.username}` : '',
+                    pc,
+                    dc: dc || undefined,
+                    answered: connection.getState() === 'connected',
+                    createdAt: Date.now(),
+                })
+            }
+        }
+        return offers
     }
 
     /**

@@ -1,547 +1,441 @@
-# Migration Guide: v0.8.x → v0.9.0
+# Migration Guide: v0.18.x → v0.18.8
 
-This guide helps you migrate from Rondevu Client v0.8.x to v0.9.0.
+Version 0.18.8 introduces significant improvements to connection durability and reliability. While we've maintained backward compatibility where possible, there are some breaking changes to be aware of.
 
-## Overview
+## Overview of Changes
 
-v0.9.0 is a **breaking change** that completely replaces low-level APIs with high-level durable connections featuring automatic reconnection and message queuing.
+### New Features
+- **Automatic reconnection** with exponential backoff
+- **Message buffering** during disconnections
+- **Connection state machine** with proper lifecycle management
+- **Rich event system** for connection monitoring
+- **ICE polling lifecycle** (stops when connected, no more resource leaks)
 
-### What's New
+### Breaking Changes
+- `connectToService()` now returns `AnswererConnection` instead of `ConnectionContext`
+- `connection:opened` event signature changed for offerer side
+- Direct DataChannel access replaced with connection wrapper API
 
-✅ **Durable Connections**: Automatic reconnection on network drops
-✅ **Message Queuing**: Messages sent during disconnections are queued and flushed on reconnect
-✅ **Durable Channels**: RTCDataChannel wrappers that survive connection drops
-✅ **TTL Auto-Refresh**: Services automatically republish before expiration
-✅ **Simplified API**: Direct methods on main client instead of nested APIs
+---
 
-### What's Removed
+## Migration Steps
 
-❌ **Low-level APIs**: `client.services.*`, `client.discovery.*`, `client.createPeer()` no longer exported
-❌ **Manual Connection Management**: No need to handle WebRTC peer lifecycle manually
-❌ **Service Handles**: Replaced with DurableService instances
+### 1. Answerer Side (connectToService)
 
-## Breaking Changes
+#### Old API (v0.18.7 and earlier)
 
-### 1. Service Exposure
-
-#### v0.8.x (Old)
 ```typescript
-import { Rondevu } from '@xtr-dev/rondevu-client';
+const context = await rondevu.connectToService({
+  serviceFqn: 'chat:1.0.0@alice',
+  onConnection: ({ dc, pc, peerUsername }) => {
+    console.log('Connected to', peerUsername)
 
-const client = new Rondevu();
-await client.register();
+    dc.addEventListener('message', (event) => {
+      console.log('Received:', event.data)
+    })
 
-const handle = await client.services.exposeService({
-  username: 'alice',
-  privateKey: keypair.privateKey,
-  serviceFqn: 'chat@1.0.0',
-  isPublic: true,
-  handler: (channel, peer) => {
-    channel.onmessage = (e) => {
-      console.log('Received:', e.data);
-      channel.send(`Echo: ${e.data}`);
-    };
+    dc.addEventListener('open', () => {
+      dc.send('Hello!')
+    })
   }
-});
+})
 
-// Unpublish
-await handle.unpublish();
+// Access peer connection
+context.pc.getStats()
 ```
 
-#### v0.9.0 (New)
+#### New API (v0.18.8)
+
 ```typescript
-import { Rondevu } from '@xtr-dev/rondevu-client';
-
-const client = new Rondevu();
-await client.register();
-
-const service = await client.exposeService({
-  username: 'alice',
-  privateKey: keypair.privateKey,
-  serviceFqn: 'chat@1.0.0',
-  isPublic: true,
-  poolSize: 10,  // NEW: Handle multiple concurrent connections
-  handler: (channel, connectionId) => {
-    // NEW: DurableChannel with event emitters
-    channel.on('message', (data) => {
-      console.log('Received:', data);
-      channel.send(`Echo: ${data}`);
-    });
+const connection = await rondevu.connectToService({
+  serviceFqn: 'chat:1.0.0@alice',
+  connectionConfig: {
+    reconnectEnabled: true,      // Optional: enable auto-reconnect
+    bufferEnabled: true,          // Optional: enable message buffering
+    connectionTimeout: 30000      // Optional: connection timeout (ms)
   }
-});
-
-// NEW: Start the service
-await service.start();
-
-// NEW: Stop the service
-await service.stop();
-```
-
-**Key Differences:**
-- `client.services.exposeService()` → `client.exposeService()`
-- Returns `DurableService` instead of `ServiceHandle`
-- Handler receives `DurableChannel` instead of `RTCDataChannel`
-- Handler receives `connectionId` string instead of `RondevuPeer`
-- DurableChannel uses `.on('message', ...)` instead of `.onmessage = ...`
-- Must call `service.start()` to begin accepting connections
-- Use `service.stop()` instead of `handle.unpublish()`
-
-### 2. Connecting to Services
-
-#### v0.8.x (Old)
-```typescript
-// Connect by username + FQN
-const { peer, channel } = await client.discovery.connect(
-  'alice',
-  'chat@1.0.0'
-);
-
-channel.onmessage = (e) => {
-  console.log('Received:', e.data);
-};
-
-channel.onopen = () => {
-  channel.send('Hello!');
-};
-
-peer.on('connected', () => {
-  console.log('Connected');
-});
-
-peer.on('failed', (error) => {
-  console.error('Failed:', error);
-});
-```
-
-#### v0.9.0 (New)
-```typescript
-// Connect by username + FQN
-const connection = await client.connect('alice', 'chat@1.0.0', {
-  maxReconnectAttempts: 10  // NEW: Configurable reconnection
-});
-
-// NEW: Create durable channel
-const channel = connection.createChannel('main');
-
-channel.on('message', (data) => {
-  console.log('Received:', data);
-});
-
-channel.on('open', () => {
-  channel.send('Hello!');
-});
-
-// NEW: Connection lifecycle events
-connection.on('connected', () => {
-  console.log('Connected');
-});
-
-connection.on('reconnecting', (attempt, max, delay) => {
-  console.log(`Reconnecting (${attempt}/${max})...`);
-});
-
-connection.on('failed', (error) => {
-  console.error('Failed permanently:', error);
-});
-
-// NEW: Must explicitly connect
-await connection.connect();
-```
-
-**Key Differences:**
-- `client.discovery.connect()` → `client.connect()`
-- Returns `DurableConnection` instead of `{ peer, channel }`
-- Must create channels with `connection.createChannel()`
-- Must call `connection.connect()` to establish connection
-- Automatic reconnection with configurable retry limits
-- Messages sent during disconnection are automatically queued
-
-### 3. Connecting by UUID
-
-#### v0.8.x (Old)
-```typescript
-const { peer, channel } = await client.discovery.connectByUuid('service-uuid');
-
-channel.onmessage = (e) => {
-  console.log('Received:', e.data);
-};
-```
-
-#### v0.9.0 (New)
-```typescript
-const connection = await client.connectByUuid('service-uuid', {
-  maxReconnectAttempts: 5
-});
-
-const channel = connection.createChannel('main');
-
-channel.on('message', (data) => {
-  console.log('Received:', data);
-});
-
-await connection.connect();
-```
-
-**Key Differences:**
-- `client.discovery.connectByUuid()` → `client.connectByUuid()`
-- Returns `DurableConnection` instead of `{ peer, channel }`
-- Must create channels and connect explicitly
-
-### 4. Multi-Connection Services (Offer Pooling)
-
-#### v0.8.x (Old)
-```typescript
-const handle = await client.services.exposeService({
-  username: 'alice',
-  privateKey: keypair.privateKey,
-  serviceFqn: 'chat@1.0.0',
-  poolSize: 5,
-  pollingInterval: 2000,
-  handler: (channel, peer, connectionId) => {
-    console.log(`Connection: ${connectionId}`);
-  },
-  onPoolStatus: (status) => {
-    console.log('Pool status:', status);
-  }
-});
-
-const status = handle.getStatus();
-await handle.addOffers(3);
-```
-
-#### v0.9.0 (New)
-```typescript
-const service = await client.exposeService({
-  username: 'alice',
-  privateKey: keypair.privateKey,
-  serviceFqn: 'chat@1.0.0',
-  poolSize: 5,          // SAME: Pool size
-  pollingInterval: 2000, // SAME: Polling interval
-  handler: (channel, connectionId) => {
-    console.log(`Connection: ${connectionId}`);
-  }
-});
-
-await service.start();
-
-// Get active connections
-const connections = service.getActiveConnections();
+})
 
 // Listen for connection events
-service.on('connection', (connectionId) => {
-  console.log('New connection:', connectionId);
-});
+connection.on('connected', () => {
+  console.log('Connected!')
+  connection.send('Hello!')
+})
+
+connection.on('message', (data) => {
+  console.log('Received:', data)
+})
+
+// Optional: monitor reconnection
+connection.on('reconnecting', (attempt) => {
+  console.log(`Reconnecting, attempt ${attempt}`)
+})
+
+connection.on('reconnect:success', () => {
+  console.log('Reconnection successful!')
+})
+
+// Access peer connection if needed
+const pc = connection.getPeerConnection()
+const dc = connection.getDataChannel()
 ```
 
-**Key Differences:**
-- `onPoolStatus` callback removed (use `service.on('connection')` instead)
-- `handle.getStatus()` replaced with `service.getActiveConnections()`
-- `handle.addOffers()` removed (pool auto-manages offers)
-- Handler receives `DurableChannel` instead of `RTCDataChannel`
+**Key Changes:**
+- ❌ Removed `onConnection` callback
+- ✅ Use event listeners instead: `connection.on('connected', ...)`
+- ❌ Removed direct `dc.send()` access
+- ✅ Use `connection.send()` for automatic buffering support
+- ✅ Added automatic reconnection and message buffering
 
-## Feature Comparison
+---
 
-| Feature | v0.8.x | v0.9.0 |
-|---------|--------|--------|
-| Service exposure | `client.services.exposeService()` | `client.exposeService()` |
-| Connection | `client.discovery.connect()` | `client.connect()` |
-| Connection by UUID | `client.discovery.connectByUuid()` | `client.connectByUuid()` |
-| Channel type | `RTCDataChannel` | `DurableChannel` |
-| Event handling | `.onmessage`, `.onopen`, etc. | `.on('message')`, `.on('open')`, etc. |
-| Automatic reconnection | ❌ No | ✅ Yes (configurable) |
-| Message queuing | ❌ No | ✅ Yes (during disconnections) |
-| TTL auto-refresh | ❌ No | ✅ Yes (configurable) |
-| Peer lifecycle | Manual | Automatic |
-| Connection pooling | ✅ Yes | ✅ Yes (same API) |
+### 2. Offerer Side (publishService)
 
-## API Mapping
-
-### Removed Exports
-
-These are no longer exported in v0.9.0:
+#### Old API (v0.18.7 and earlier)
 
 ```typescript
-// ❌ Removed
-import {
-  RondevuServices,
-  RondevuDiscovery,
-  RondevuPeer,
-  ServiceHandle,
-  PooledServiceHandle,
-  ConnectResult
-} from '@xtr-dev/rondevu-client';
+await rondevu.publishService({
+  service: 'chat:1.0.0',
+  maxOffers: 5
+})
+
+await rondevu.startFilling()
+
+// Handle connections
+rondevu.on('connection:opened', (offerId, dc) => {
+  console.log('New connection:', offerId)
+
+  dc.addEventListener('message', (event) => {
+    console.log('Received:', event.data)
+  })
+
+  dc.send('Welcome!')
+})
 ```
 
-### New Exports
-
-These are new in v0.9.0:
+#### New API (v0.18.8)
 
 ```typescript
-// ✅ New
-import {
-  DurableConnection,
-  DurableChannel,
-  DurableService,
-  DurableConnectionState,
-  DurableChannelState,
-  DurableConnectionConfig,
-  DurableChannelConfig,
-  DurableServiceConfig,
-  DurableConnectionEvents,
-  DurableChannelEvents,
-  DurableServiceEvents,
-  ConnectionInfo,
-  ServiceInfo,
-  QueuedMessage
-} from '@xtr-dev/rondevu-client';
-```
-
-### Unchanged Exports
-
-These work the same in both versions:
-
-```typescript
-// ✅ Unchanged
-import {
-  Rondevu,
-  RondevuAuth,
-  RondevuUsername,
-  Credentials,
-  UsernameClaimResult,
-  UsernameCheckResult
-} from '@xtr-dev/rondevu-client';
-```
-
-## Configuration Options
-
-### New Connection Options
-
-v0.9.0 adds extensive configuration for automatic reconnection and message queuing:
-
-```typescript
-const connection = await client.connect('alice', 'chat@1.0.0', {
-  // Reconnection
-  maxReconnectAttempts: 10,      // default: 10
-  reconnectBackoffBase: 1000,    // default: 1000ms
-  reconnectBackoffMax: 30000,    // default: 30000ms (30 seconds)
-  reconnectJitter: 0.2,          // default: 0.2 (±20%)
-  connectionTimeout: 30000,      // default: 30000ms
-
-  // Message queuing
-  maxQueueSize: 1000,            // default: 1000 messages
-  maxMessageAge: 60000,          // default: 60000ms (1 minute)
-
-  // WebRTC
-  rtcConfig: {
-    iceServers: [...]
+await rondevu.publishService({
+  service: 'chat:1.0.0',
+  maxOffers: 5,
+  connectionConfig: {
+    reconnectEnabled: true,
+    bufferEnabled: true
   }
-});
+})
+
+await rondevu.startFilling()
+
+// Handle connections - signature changed!
+rondevu.on('connection:opened', (offerId, connection) => {
+  console.log('New connection:', offerId)
+
+  connection.on('message', (data) => {
+    console.log('Received:', data)
+  })
+
+  connection.on('disconnected', () => {
+    console.log('Connection lost, will auto-reconnect')
+  })
+
+  connection.send('Welcome!')
+})
 ```
 
-### New Service Options
+**Key Changes:**
+- ⚠️ Event signature changed: `(offerId, dc)` → `(offerId, connection)`
+- ❌ Removed direct DataChannel access
+- ✅ Use `connection.send()` and `connection.on('message', ...)`
+- ✅ Connection object provides lifecycle events
 
-Services can now auto-refresh TTL:
+---
+
+## New Connection Configuration
+
+All connection-related options are now configured via `connectionConfig`:
 
 ```typescript
-const service = await client.exposeService({
-  username: 'alice',
-  privateKey: keypair.privateKey,
-  serviceFqn: 'chat@1.0.0',
+interface ConnectionConfig {
+  // Timeouts
+  connectionTimeout: number      // Default: 30000ms (30s)
+  iceGatheringTimeout: number    // Default: 10000ms (10s)
 
-  // TTL auto-refresh (NEW)
-  ttl: 300000,              // default: 300000ms (5 minutes)
-  ttlRefreshMargin: 0.2,    // default: 0.2 (refresh at 80% of TTL)
+  // Reconnection
+  reconnectEnabled: boolean      // Default: true
+  maxReconnectAttempts: number   // Default: 5
+  reconnectBackoffBase: number   // Default: 1000ms
+  reconnectBackoffMax: number    // Default: 30000ms (30s)
 
-  // All connection options also apply to incoming connections
-  maxReconnectAttempts: 10,
-  maxQueueSize: 1000,
-  // ...
-});
+  // Message buffering
+  bufferEnabled: boolean         // Default: true
+  maxBufferSize: number          // Default: 100 messages
+  maxBufferAge: number           // Default: 60000ms (1 min)
+
+  // Debug
+  debug: boolean                 // Default: false
+}
 ```
 
-## Migration Checklist
+### Example Usage
 
-- [ ] Replace `client.services.exposeService()` with `client.exposeService()`
-- [ ] Add `await service.start()` after creating service
-- [ ] Replace `handle.unpublish()` with `service.stop()`
-- [ ] Replace `client.discovery.connect()` with `client.connect()`
-- [ ] Replace `client.discovery.connectByUuid()` with `client.connectByUuid()`
-- [ ] Create channels with `connection.createChannel()` instead of receiving them directly
-- [ ] Add `await connection.connect()` to establish connection
-- [ ] Update handlers from `(channel, peer, connectionId?)` to `(channel, connectionId)`
-- [ ] Replace `.onmessage` with `.on('message', ...)`
-- [ ] Replace `.onopen` with `.on('open', ...)`
-- [ ] Replace `.onclose` with `.on('close', ...)`
-- [ ] Replace `.onerror` with `.on('error', ...)`
-- [ ] Add reconnection event handlers (`connection.on('reconnecting', ...)`)
-- [ ] Review and configure reconnection options if needed
-- [ ] Review and configure message queue limits if needed
-- [ ] Update TypeScript imports to use new types
-- [ ] Test automatic reconnection behavior
-- [ ] Test message queuing during disconnections
+```typescript
+const connection = await rondevu.connectToService({
+  serviceFqn: 'chat:1.0.0@alice',
+  connectionConfig: {
+    // Disable auto-reconnect if you want manual control
+    reconnectEnabled: false,
+
+    // Disable buffering if messages are time-sensitive
+    bufferEnabled: false,
+
+    // Increase timeout for slow networks
+    connectionTimeout: 60000,
+
+    // Reduce retry attempts
+    maxReconnectAttempts: 3
+  }
+})
+```
+
+---
+
+## New Event System
+
+### Connection Lifecycle Events
+
+```typescript
+connection.on('state:changed', ({ oldState, newState, reason }) => {})
+connection.on('connecting', () => {})
+connection.on('connected', () => {})
+connection.on('disconnected', (reason) => {})
+connection.on('failed', (error) => {})
+connection.on('closed', (reason) => {})
+```
+
+### Reconnection Events
+
+```typescript
+connection.on('reconnect:scheduled', ({ attempt, delay, maxAttempts }) => {})
+connection.on('reconnect:attempting', (attempt) => {})
+connection.on('reconnect:success', () => {})
+connection.on('reconnect:failed', (error) => {})
+connection.on('reconnect:exhausted', (attempts) => {})
+```
+
+### Message Events
+
+```typescript
+connection.on('message', (data) => {})
+connection.on('message:sent', (data, buffered) => {})
+connection.on('message:buffered', (data) => {})
+connection.on('message:replayed', (message) => {})
+connection.on('message:buffer:overflow', (discardedMessage) => {})
+```
+
+### ICE Events
+
+```typescript
+connection.on('ice:candidate:local', (candidate) => {})
+connection.on('ice:candidate:remote', (candidate) => {})
+connection.on('ice:connection:state', (state) => {})
+connection.on('ice:polling:started', () => {})
+connection.on('ice:polling:stopped', () => {})
+```
+
+---
 
 ## Common Migration Patterns
 
-### Pattern 1: Simple Echo Service
+### Pattern 1: Simple Message Handler
 
-#### Before (v0.8.x)
+**Before:**
 ```typescript
-await client.services.exposeService({
-  username: 'alice',
-  privateKey: keypair.privateKey,
-  serviceFqn: 'echo@1.0.0',
-  handler: (channel) => {
-    channel.onmessage = (e) => {
-      channel.send(`Echo: ${e.data}`);
-    };
-  }
-});
+dc.addEventListener('message', (event) => {
+  console.log(event.data)
+})
+dc.send('Hello')
 ```
 
-#### After (v0.9.0)
+**After:**
 ```typescript
-const service = await client.exposeService({
-  username: 'alice',
-  privateKey: keypair.privateKey,
-  serviceFqn: 'echo@1.0.0',
-  handler: (channel) => {
-    channel.on('message', (data) => {
-      channel.send(`Echo: ${data}`);
-    });
-  }
-});
-
-await service.start();
+connection.on('message', (data) => {
+  console.log(data)
+})
+connection.send('Hello')
 ```
 
-### Pattern 2: Connection with Error Handling
+---
 
-#### Before (v0.8.x)
+### Pattern 2: Connection State Monitoring
+
+**Before:**
 ```typescript
-try {
-  const { peer, channel } = await client.discovery.connect('alice', 'chat@1.0.0');
-
-  channel.onopen = () => {
-    channel.send('Hello!');
-  };
-
-  peer.on('failed', (error) => {
-    console.error('Connection failed:', error);
-    // Manual reconnection logic here
-  });
-} catch (error) {
-  console.error('Failed to connect:', error);
+pc.oniceconnectionstatechange = () => {
+  console.log('ICE state:', pc.iceConnectionState)
 }
 ```
 
-#### After (v0.9.0)
+**After:**
 ```typescript
-const connection = await client.connect('alice', 'chat@1.0.0', {
-  maxReconnectAttempts: 5
-});
+connection.on('ice:connection:state', (state) => {
+  console.log('ICE state:', state)
+})
 
-const channel = connection.createChannel('main');
+// Or use higher-level events
+connection.on('connected', () => console.log('Connected!'))
+connection.on('disconnected', () => console.log('Disconnected!'))
+```
 
-channel.on('open', () => {
-  channel.send('Hello!');
-});
+---
 
-connection.on('reconnecting', (attempt, max, delay) => {
-  console.log(`Reconnecting (${attempt}/${max}) in ${delay}ms`);
-});
+### Pattern 3: Handling Connection Failures
 
-connection.on('failed', (error) => {
-  console.error('Connection failed permanently:', error);
-});
-
-try {
-  await connection.connect();
-} catch (error) {
-  console.error('Initial connection failed:', error);
+**Before:**
+```typescript
+pc.oniceconnectionstatechange = () => {
+  if (pc.iceConnectionState === 'failed') {
+    // Manual reconnection logic
+    pc.close()
+    await setupNewConnection()
+  }
 }
 ```
 
-### Pattern 3: Multi-User Chat Server
-
-#### Before (v0.8.x)
+**After:**
 ```typescript
-const connections = new Map();
+// Automatic reconnection built-in!
+connection.on('reconnecting', (attempt) => {
+  console.log(`Reconnecting... attempt ${attempt}`)
+})
 
-await client.services.exposeService({
-  username: 'alice',
-  privateKey: keypair.privateKey,
-  serviceFqn: 'chat@1.0.0',
-  poolSize: 10,
-  handler: (channel, peer, connectionId) => {
-    connections.set(connectionId, channel);
+connection.on('reconnect:success', () => {
+  console.log('Back online!')
+})
 
-    channel.onmessage = (e) => {
-      // Broadcast to all
-      for (const [id, ch] of connections) {
-        if (id !== connectionId) {
-          ch.send(e.data);
-        }
-      }
-    };
-
-    channel.onclose = () => {
-      connections.delete(connectionId);
-    };
-  }
-});
+connection.on('reconnect:exhausted', (attempts) => {
+  console.log(`Failed after ${attempts} attempts`)
+  // Fallback logic here
+})
 ```
 
-#### After (v0.9.0)
+---
+
+### Pattern 4: Accessing Raw RTCPeerConnection/DataChannel
+
+If you need low-level access:
+
 ```typescript
-const channels = new Map();
+const connection = await rondevu.connectToService({ ... })
 
-const service = await client.exposeService({
-  username: 'alice',
-  privateKey: keypair.privateKey,
-  serviceFqn: 'chat@1.0.0',
-  poolSize: 10,
-  handler: (channel, connectionId) => {
-    channels.set(connectionId, channel);
+// Get raw objects if needed
+const pc = connection.getPeerConnection()
+const dc = connection.getDataChannel()
 
-    channel.on('message', (data) => {
-      // Broadcast to all
-      for (const [id, ch] of channels) {
-        if (id !== connectionId) {
-          ch.send(data);
-        }
-      }
-    });
-
-    channel.on('close', () => {
-      channels.delete(connectionId);
-    });
-  }
-});
-
-await service.start();
-
-// Optional: Track connections
-service.on('connection', (connectionId) => {
-  console.log(`User ${connectionId} joined`);
-});
-
-service.on('disconnection', (connectionId) => {
-  console.log(`User ${connectionId} left`);
-});
+// Use them directly (bypasses buffering/reconnection features)
+if (dc) {
+  dc.addEventListener('message', (event) => {
+    console.log(event.data)
+  })
+}
 ```
 
-## Benefits of Migration
+**Note:** Using raw DataChannel bypasses automatic buffering and reconnection features.
 
-1. **Reliability**: Automatic reconnection handles network hiccups transparently
-2. **Simplicity**: No need to manage WebRTC peer lifecycle manually
-3. **Durability**: Messages sent during disconnections are queued and delivered when connection restores
-4. **Uptime**: Services automatically refresh TTL before expiration
-5. **Type Safety**: Better TypeScript types with DurableChannel event emitters
-6. **Debugging**: Queue size monitoring, connection state tracking, and detailed events
+---
 
-## Getting Help
+## Backward Compatibility Notes
 
-If you encounter issues during migration:
-1. Check the [README](./README.md) for complete API documentation
-2. Review the examples for common patterns
-3. Open an issue on [GitHub](https://github.com/xtr-dev/rondevu-client/issues)
+### What Still Works
+✅ `publishService()` API (just add `connectionConfig` optionally)
+✅ `findService()` API (unchanged)
+✅ All RondevuAPI methods (unchanged)
+✅ ICE server presets (unchanged)
+✅ Username and keypair management (unchanged)
+
+### What Changed
+⚠️ `connectToService()` return type: `ConnectionContext` → `AnswererConnection`
+⚠️ `connection:opened` event signature: `(offerId, dc)` → `(offerId, connection)`
+⚠️ Direct DataChannel access replaced with connection wrapper
+
+### What's New
+✨ Automatic reconnection with exponential backoff
+✨ Message buffering during disconnections
+✨ Rich event system (20+ events)
+✨ Connection state machine
+✨ ICE polling lifecycle management (no more resource leaks)
+
+---
+
+## Troubleshooting
+
+### Issue: "connection.send is not a function"
+
+You're trying to use the old `dc.send()` API. Update to:
+
+```typescript
+// Old
+dc.send('Hello')
+
+// New
+connection.send('Hello')
+```
+
+---
+
+### Issue: "Cannot read property 'addEventListener' of undefined"
+
+You're trying to access `dc` directly. Update to event listeners:
+
+```typescript
+// Old
+dc.addEventListener('message', (event) => {
+  console.log(event.data)
+})
+
+// New
+connection.on('message', (data) => {
+  console.log(data)
+})
+```
+
+---
+
+### Issue: Messages not being delivered
+
+Check if buffering is enabled and connection is established:
+
+```typescript
+connection.on('connected', () => {
+  // Only send after connected
+  connection.send('Hello')
+})
+
+// Monitor buffer
+connection.on('message:buffered', (data) => {
+  console.log('Message buffered, will send when reconnected')
+})
+```
+
+---
+
+## Need Help?
+
+- Check the updated README for full API documentation
+- See examples in the `demo/` directory
+- File issues at: https://github.com/xtr-dev/rondevu/issues
+
+---
+
+## Summary Checklist
+
+When migrating from v0.18.7 to v0.18.8:
+
+- [ ] Update `connectToService()` to use returned `AnswererConnection`
+- [ ] Replace `dc.addEventListener('message', ...)` with `connection.on('message', ...)`
+- [ ] Replace `dc.send()` with `connection.send()`
+- [ ] Update `connection:opened` event handler signature
+- [ ] Consider adding reconnection event handlers
+- [ ] Optionally configure `connectionConfig` for your use case
+- [ ] Test connection resilience (disconnect network, should auto-reconnect)
+- [ ] Remove manual reconnection logic (now built-in)
