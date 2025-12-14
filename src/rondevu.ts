@@ -418,10 +418,41 @@ export class Rondevu {
         this.debug('Creating new offer...')
 
         // Create the offer using the factory
+        // Note: The factory may call setLocalDescription() which triggers ICE gathering
         const { pc, dc, offer } = await this.offerFactory(rtcConfig)
 
         // Auto-append username to service
         const serviceFqn = `${this.currentService}@${this.username}`
+
+        // Queue to buffer ICE candidates generated before we have the offerId
+        // This fixes the race condition where ICE candidates are lost because
+        // they're generated before we can set up the handler with the offerId
+        const earlyIceCandidates: RTCIceCandidateInit[] = []
+        let offerId: string | null = null
+
+        // Set up a queuing ICE candidate handler immediately after getting the pc
+        // This captures any candidates that fire before we have the offerId
+        pc.onicecandidate = async (event) => {
+            if (event.candidate) {
+                // Handle both browser and Node.js (wrtc) environments
+                const candidateData = typeof event.candidate.toJSON === 'function'
+                    ? event.candidate.toJSON()
+                    : event.candidate
+
+                if (offerId) {
+                    // We have the offerId, send directly
+                    try {
+                        await this.api.addOfferIceCandidates(serviceFqn, offerId, [candidateData])
+                    } catch (err) {
+                        console.error('[Rondevu] Failed to send ICE candidate:', err)
+                    }
+                } else {
+                    // Queue for later - we don't have the offerId yet
+                    this.debug('Queuing early ICE candidate')
+                    earlyIceCandidates.push(candidateData)
+                }
+            }
+        }
 
         // Publish to server
         const result = await this.api.publishService({
@@ -432,7 +463,7 @@ export class Rondevu {
             message: '',
         })
 
-        const offerId = result.offers[0].offerId
+        offerId = result.offers[0].offerId
 
         // Store active offer
         this.activeOffers.set(offerId, {
@@ -446,15 +477,22 @@ export class Rondevu {
 
         this.debug(`Offer created: ${offerId}`)
 
-        // Set up ICE candidate handler
-        this.setupIceCandidateHandler(pc, serviceFqn, offerId)
+        // Send any queued early ICE candidates
+        if (earlyIceCandidates.length > 0) {
+            this.debug(`Sending ${earlyIceCandidates.length} early ICE candidates`)
+            try {
+                await this.api.addOfferIceCandidates(serviceFqn, offerId, earlyIceCandidates)
+            } catch (err) {
+                console.error('[Rondevu] Failed to send early ICE candidates:', err)
+            }
+        }
 
         // Monitor connection state
         pc.onconnectionstatechange = () => {
             this.debug(`Offer ${offerId} connection state: ${pc.connectionState}`)
 
             if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
-                this.activeOffers.delete(offerId)
+                this.activeOffers.delete(offerId!)
                 this.fillOffers()  // Try to replace failed offer
             }
         }
