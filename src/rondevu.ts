@@ -1,6 +1,6 @@
 import { RondevuAPI, Keypair, IceCandidate, BatcherOptions } from './api.js'
 import { CryptoAdapter } from './crypto-adapter.js'
-import { EventEmitter } from 'events'
+import { EventEmitter } from 'eventemitter3'
 
 // ICE server preset names
 export type IceServerPreset = 'ipv4-turn' | 'hostname-turns' | 'google-stun' | 'relay-only'
