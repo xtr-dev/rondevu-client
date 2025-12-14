@@ -81,13 +81,11 @@ export class NodeCryptoAdapter implements CryptoAdapter {
 
     bytesToBase64(bytes: Uint8Array): string {
         // Node.js Buffer provides native base64 encoding
-        // @ts-expect-error - Buffer is available in Node.js but not in browser TypeScript definitions
         return Buffer.from(bytes).toString('base64')
     }
 
     base64ToBytes(base64: string): Uint8Array {
         // Node.js Buffer provides native base64 decoding
-        // @ts-expect-error - Buffer is available in Node.js but not in browser TypeScript definitions
         return new Uint8Array(Buffer.from(base64, 'base64'))
     }
 

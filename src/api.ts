@@ -39,6 +39,7 @@ export interface Service {
 
 export interface IceCandidate {
     candidate: RTCIceCandidateInit | null
+    role: 'offerer' | 'answerer'
     createdAt: number
 }
 

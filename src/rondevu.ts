@@ -1,5 +1,6 @@
 import { RondevuAPI, Keypair, IceCandidate, BatcherOptions } from './api.js'
 import { CryptoAdapter } from './crypto-adapter.js'
+import { EventEmitter } from 'events'
 
 // ICE server preset names
 export type IceServerPreset = 'ipv4-turn' | 'hostname-turns' | 'google-stun' | 'relay-only'
@@ -100,13 +101,80 @@ export interface ConnectToServiceOptions {
     rtcConfig?: RTCConfiguration  // Optional: override default ICE servers
 }
 
-interface ActiveOffer {
+export interface ActiveOffer {
     offerId: string
     serviceFqn: string
     pc: RTCPeerConnection
     dc?: RTCDataChannel
     answered: boolean
     createdAt: number
+}
+
+export interface FindServiceOptions {
+    mode?: 'direct' | 'random' | 'paginated'  // Default: 'direct' if serviceFqn has username, 'random' otherwise
+    limit?: number  // For paginated mode (default: 10)
+    offset?: number  // For paginated mode (default: 0)
+}
+
+export interface ServiceResult {
+    serviceId: string
+    username: string
+    serviceFqn: string
+    offerId: string
+    sdp: string
+    createdAt: number
+    expiresAt: number
+}
+
+export interface PaginatedServiceResult {
+    services: ServiceResult[]
+    count: number
+    limit: number
+    offset: number
+}
+
+/**
+ * Base error class for Rondevu errors
+ */
+export class RondevuError extends Error {
+    constructor(message: string, public context?: Record<string, any>) {
+        super(message)
+        this.name = 'RondevuError'
+        Object.setPrototypeOf(this, RondevuError.prototype)
+    }
+}
+
+/**
+ * Network-related errors (API calls, connectivity)
+ */
+export class NetworkError extends RondevuError {
+    constructor(message: string, context?: Record<string, any>) {
+        super(message, context)
+        this.name = 'NetworkError'
+        Object.setPrototypeOf(this, NetworkError.prototype)
+    }
+}
+
+/**
+ * Validation errors (invalid input, malformed data)
+ */
+export class ValidationError extends RondevuError {
+    constructor(message: string, context?: Record<string, any>) {
+        super(message, context)
+        this.name = 'ValidationError'
+        Object.setPrototypeOf(this, ValidationError.prototype)
+    }
+}
+
+/**
+ * WebRTC connection errors (peer connection failures, ICE issues)
+ */
+export class ConnectionError extends RondevuError {
+    constructor(message: string, context?: Record<string, any>) {
+        super(message, context)
+        this.name = 'ConnectionError'
+        Object.setPrototypeOf(this, ConnectionError.prototype)
+    }
 }
 
 /**
@@ -163,7 +231,7 @@ interface ActiveOffer {
  * rondevu.stopFilling()
  * ```
  */
-export class Rondevu {
+export class Rondevu extends EventEmitter {
     // Constants
     private static readonly DEFAULT_TTL_MS = 300000  // 5 minutes
     private static readonly POLLING_INTERVAL_MS = 1000  // 1 second
@@ -204,6 +272,7 @@ export class Rondevu {
         rtcPeerConnection?: typeof RTCPeerConnection,
         rtcIceCandidate?: typeof RTCIceCandidate
     ) {
+        super()
         this.apiUrl = apiUrl
         this.username = username
         this.keypair = keypair
@@ -402,6 +471,9 @@ export class Rondevu {
                         ? event.candidate.toJSON()
                         : event.candidate
 
+                    // Emit local ICE candidate event
+                    this.emit('ice:candidate:local', offerId, candidateData)
+
                     await this.api.addOfferIceCandidates(
                         serviceFqn,
                         offerId,
@@ -446,6 +518,11 @@ export class Rondevu {
                 const candidateData = typeof event.candidate.toJSON === 'function'
                     ? event.candidate.toJSON()
                     : event.candidate
+
+                // Emit local ICE candidate event
+                if (offerId) {
+                    this.emit('ice:candidate:local', offerId, candidateData)
+                }
 
                 if (offerId) {
                     // We have the offerId, send directly
@@ -499,6 +576,15 @@ export class Rondevu {
         })
 
         this.debug(`Offer created: ${offerId}`)
+        this.emit('offer:created', offerId, serviceFqn)
+
+        // Set up data channel open handler (offerer side)
+        if (dc) {
+            dc.onopen = () => {
+                this.debug(`Data channel opened for offer ${offerId}`)
+                this.emit('connection:opened', offerId, dc)
+            }
+        }
 
         // 6. Send any queued early ICE candidates
         if (earlyIceCandidates.length > 0) {
@@ -515,6 +601,7 @@ export class Rondevu {
             this.debug(`Offer ${offerId} connection state: ${pc.connectionState}`)
 
             if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+                this.emit('connection:closed', offerId!)
                 this.activeOffers.delete(offerId!)
                 this.fillOffers()  // Try to replace failed offer
             }
@@ -563,6 +650,7 @@ export class Rondevu {
 
                     activeOffer.answered = true
                     this.lastPollTimestamp = answer.answeredAt
+                    this.emit('offer:answered', answer.offerId, answer.answererId)
 
                     // Create replacement offer
                     this.fillOffers()
@@ -577,6 +665,7 @@ export class Rondevu {
 
                     for (const item of answererCandidates) {
                         if (item.candidate) {
+                            this.emit('ice:candidate:remote', offerId, item.candidate, item.role)
                             await activeOffer.pc.addIceCandidate(new RTCIceCandidate(item.candidate))
                             this.lastPollTimestamp = Math.max(this.lastPollTimestamp, item.createdAt)
                         }
@@ -639,6 +728,51 @@ export class Rondevu {
     }
 
     /**
+     * Get the count of active offers
+     * @returns Number of active offers
+     */
+    getOfferCount(): number {
+        return this.activeOffers.size
+    }
+
+    /**
+     * Check if an offer is currently connected
+     * @param offerId - The offer ID to check
+     * @returns True if the offer exists and has been answered
+     */
+    isConnected(offerId: string): boolean {
+        const offer = this.activeOffers.get(offerId)
+        return offer ? offer.answered : false
+    }
+
+    /**
+     * Disconnect all active offers
+     * Similar to stopFilling() but doesn't stop the polling/filling process
+     */
+    async disconnectAll(): Promise<void> {
+        this.debug('Disconnecting all offers')
+        for (const [offerId, offer] of this.activeOffers.entries()) {
+            this.debug(`Closing offer ${offerId}`)
+            offer.dc?.close()
+            offer.pc.close()
+        }
+        this.activeOffers.clear()
+    }
+
+    /**
+     * Get the current service status
+     * @returns Object with service state information
+     */
+    getServiceStatus(): { active: boolean; offerCount: number; maxOffers: number; filling: boolean } {
+        return {
+            active: this.currentService !== null,
+            offerCount: this.activeOffers.size,
+            maxOffers: this.maxOffers,
+            filling: this.filling
+        }
+    }
+
+    /**
      * Resolve the full service FQN from various input options
      * Supports direct FQN, service+username, or service discovery
      */
@@ -652,7 +786,7 @@ export class Rondevu {
         } else if (service) {
             // Discovery mode - get random service
             this.debug(`Discovering service: ${service}`)
-            const discovered = await this.discoverService(service)
+            const discovered = await this.findService(service) as ServiceResult
             return discovered.serviceFqn
         } else {
             throw new Error('Either serviceFqn or service must be provided')
@@ -679,6 +813,7 @@ export class Rondevu {
                 )
                 for (const item of result.candidates) {
                     if (item.candidate) {
+                        this.emit('ice:candidate:remote', offerId, item.candidate, item.role)
                         await pc.addIceCandidate(new RTCIceCandidate(item.candidate))
                         lastIceTimestamp = item.createdAt
                     }
@@ -748,6 +883,7 @@ export class Rondevu {
             pc.ondatachannel = (event) => {
                 this.debug('Data channel received from offerer')
                 dc = event.channel
+                this.emit('connection:opened', serviceData.offerId, dc)
                 resolve(dc)
             }
         })
@@ -819,56 +955,45 @@ export class Rondevu {
     // ============================================
 
     /**
-     * Get service by FQN (with username) - Direct lookup
-     * Example: chat:1.0.0@alice
+     * Find a service - unified discovery method
+     *
+     * Replaces getService(), discoverService(), and discoverServices() with a single method.
+     *
+     * @param serviceFqn - Service identifier (e.g., 'chat:1.0.0' or 'chat:1.0.0@alice')
+     * @param options - Discovery options
+     *
+     * @example
+     * ```typescript
+     * // Direct lookup (has username)
+     * const service = await rondevu.findService('chat:1.0.0@alice')
+     *
+     * // Random discovery (no username)
+     * const service = await rondevu.findService('chat:1.0.0')
+     *
+     * // Paginated discovery
+     * const result = await rondevu.findService('chat:1.0.0', {
+     *   mode: 'paginated',
+     *   limit: 20,
+     *   offset: 0
+     * })
+     * ```
      */
-    async getService(serviceFqn: string): Promise<{
-        serviceId: string
-        username: string
-        serviceFqn: string
-        offerId: string
-        sdp: string
-        createdAt: number
-        expiresAt: number
-    }> {
-        return await this.api.getService(serviceFqn)
-    }
+    async findService(
+        serviceFqn: string,
+        options?: FindServiceOptions
+    ): Promise<ServiceResult | PaginatedServiceResult> {
+        const { mode, limit = 10, offset = 0 } = options || {}
 
-    /**
-     * Discover a random available service without knowing the username
-     * Example: chat:1.0.0 (without @username)
-     */
-    async discoverService(serviceVersion: string): Promise<{
-        serviceId: string
-        username: string
-        serviceFqn: string
-        offerId: string
-        sdp: string
-        createdAt: number
-        expiresAt: number
-    }> {
-        return await this.api.getService(serviceVersion)
-    }
+        // Auto-detect mode if not specified
+        const hasUsername = serviceFqn.includes('@')
+        const effectiveMode = mode || (hasUsername ? 'direct' : 'random')
 
-    /**
-     * Discover multiple available services with pagination
-     * Example: chat:1.0.0 (without @username)
-     */
-    async discoverServices(serviceVersion: string, limit: number = 10, offset: number = 0): Promise<{
-        services: Array<{
-            serviceId: string
-            username: string
-            serviceFqn: string
-            offerId: string
-            sdp: string
-            createdAt: number
-            expiresAt: number
-        }>
-        count: number
-        limit: number
-        offset: number
-    }> {
-        return await this.api.getService(serviceVersion, { limit, offset })
+        if (effectiveMode === 'paginated') {
+            return await this.api.getService(serviceFqn, { limit, offset })
+        } else {
+            // Both 'direct' and 'random' use the same API call
+            return await this.api.getService(serviceFqn)
+        }
     }
 
     // ============================================

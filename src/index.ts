@@ -3,7 +3,7 @@
  * WebRTC peer signaling client
  */
 
-export { Rondevu } from './rondevu.js'
+export { Rondevu, RondevuError, NetworkError, ValidationError, ConnectionError } from './rondevu.js'
 export { RondevuAPI } from './api.js'
 export { RpcBatcher } from './rpc-batcher.js'
 
@@ -32,7 +32,11 @@ export type {
     ConnectToServiceOptions,
     ConnectionContext,
     OfferContext,
-    OfferFactory
+    OfferFactory,
+    ActiveOffer,
+    FindServiceOptions,
+    ServiceResult,
+    PaginatedServiceResult
 } from './rondevu.js'
 
 export type { CryptoAdapter } from './crypto-adapter.js'
