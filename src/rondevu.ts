@@ -651,17 +651,25 @@ export class Rondevu extends EventEmitter {
                 if (activeOffer && !activeOffer.answered) {
                     this.debug(`Received answer for offer ${answer.offerId}`)
 
-                    await activeOffer.pc.setRemoteDescription({
-                        type: 'answer',
-                        sdp: answer.sdp
-                    })
-
+                    // Mark as answered BEFORE setRemoteDescription to prevent race condition
                     activeOffer.answered = true
-                    this.lastPollTimestamp = answer.answeredAt
-                    this.emit('offer:answered', answer.offerId, answer.answererId)
 
-                    // Create replacement offer
-                    this.fillOffers()
+                    try {
+                        await activeOffer.pc.setRemoteDescription({
+                            type: 'answer',
+                            sdp: answer.sdp
+                        })
+
+                        this.lastPollTimestamp = answer.answeredAt
+                        this.emit('offer:answered', answer.offerId, answer.answererId)
+
+                        // Create replacement offer
+                        this.fillOffers()
+                    } catch (err) {
+                        // If setRemoteDescription fails, reset the answered flag
+                        activeOffer.answered = false
+                        throw err
+                    }
                 }
             }
 
