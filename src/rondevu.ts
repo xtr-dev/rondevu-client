@@ -382,6 +382,10 @@ export class Rondevu {
 
     /**
      * Set up ICE candidate handler to send candidates to the server
+     *
+     * Note: This is used by connectToService() where the offerId is already known.
+     * For createOffer(), we use inline ICE handling with early candidate queuing
+     * since the offerId isn't available until after the factory completes.
      */
     private setupIceCandidateHandler(
         pc: RTCPeerConnection,
@@ -434,7 +438,7 @@ export class Rondevu {
         // This ensures we capture all candidates, even those generated immediately
         // when setLocalDescription() is called in the factory
         const earlyIceCandidates: RTCIceCandidateInit[] = []
-        let offerId: string | null = null
+        let offerId: string | undefined
 
         pc.onicecandidate = async (event) => {
             if (event.candidate) {
@@ -461,7 +465,17 @@ export class Rondevu {
         // 3. Call the factory with the pc - factory creates data channel and offer
         // When factory calls setLocalDescription(), ICE gathering starts and
         // candidates are captured by the handler we set up above
-        const { dc, offer } = await this.offerFactory(pc)
+        let dc: RTCDataChannel | undefined
+        let offer: RTCSessionDescriptionInit
+        try {
+            const factoryResult = await this.offerFactory(pc)
+            dc = factoryResult.dc
+            offer = factoryResult.offer
+        } catch (err) {
+            // Clean up the connection if factory fails
+            pc.close()
+            throw err
+        }
 
         // 4. Publish to server to get offerId
         const result = await this.api.publishService({

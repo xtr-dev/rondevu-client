@@ -49,8 +49,8 @@ const rondevu = await Rondevu.connect({
 await rondevu.publishService({
   service: 'chat:1.0.0',
   maxOffers: 5,  // Maintain up to 5 concurrent offers
-  offerFactory: async (rtcConfig) => {
-    const pc = new RTCPeerConnection(rtcConfig)
+  offerFactory: async (pc) => {
+    // pc is created by Rondevu with ICE handlers already attached
     const dc = pc.createDataChannel('chat')
 
     dc.addEventListener('open', () => {
@@ -64,7 +64,7 @@ await rondevu.publishService({
 
     const offer = await pc.createOffer()
     await pc.setLocalDescription(offer)
-    return { pc, dc, offer }
+    return { dc, offer }
   }
 })
 
