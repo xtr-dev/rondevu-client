@@ -15,7 +15,7 @@ TypeScript/JavaScript client for Rondevu, providing WebRTC signaling with **auto
 
 ## Features
 
-### ✨ New in v0.18.9
+### ✨ New in v0.18.11
 - **🔄 Automatic Reconnection**: Built-in exponential backoff for failed connections
 - **📦 Message Buffering**: Queues messages during disconnections, replays on reconnect
 - **📊 Connection State Machine**: Explicit lifecycle tracking with native RTC events
@@ -164,10 +164,10 @@ rondevu.stopFilling()         // Stop and close all connections
 
 ### Connecting to Services
 
-**⚠️ Breaking Change in v0.18.9:** `connectToService()` now returns `AnswererConnection` instead of `ConnectionContext`.
+**⚠️ Breaking Change in v0.18.9+:** `connectToService()` now returns `AnswererConnection` instead of `ConnectionContext`.
 
 ```typescript
-// New API (v0.18.9+)
+// New API (v0.18.9/v0.18.11+)
 const connection = await rondevu.connectToService({
   serviceFqn?: string,     // Full FQN like 'chat:1.0.0@alice'
   service?: string,        // Service without username (for discovery)
@@ -263,11 +263,11 @@ const result = await rondevu.findService(
 
 ## Migration Guide
 
-**Upgrading from v0.18.7 or earlier?** See [MIGRATION.md](./MIGRATION.md) for detailed upgrade instructions.
+**Upgrading from v0.18.10 or earlier?** See [MIGRATION.md](./MIGRATION.md) for detailed upgrade instructions.
 
 ### Quick Migration Summary
 
-**Before (v0.18.7):**
+**Before (v0.18.7/v0.18.10):**
 ```typescript
 const context = await rondevu.connectToService({
   serviceFqn: 'chat:1.0.0@alice',
@@ -278,7 +278,7 @@ const context = await rondevu.connectToService({
 })
 ```
 
-**After (v0.18.9):**
+**After (v0.18.9/v0.18.11):**
 ```typescript
 const connection = await rondevu.connectToService({
   serviceFqn: 'chat:1.0.0@alice'
@@ -366,7 +366,19 @@ const connection = await rondevu.connectToService({
 
 ## Changelog
 
-### v0.18.9 (Latest)
+### v0.18.11 (Latest)
+- Restore EventEmitter-based durable connections (same as v0.18.9)
+- Durable WebRTC connections with state machine
+- Automatic reconnection with exponential backoff
+- Message buffering during disconnections
+- ICE polling lifecycle management
+- **Breaking:** `connectToService()` returns `AnswererConnection` instead of `ConnectionContext`
+- See [MIGRATION.md](./MIGRATION.md) for upgrade guide
+
+### v0.18.10
+- Temporary revert to callback-based API (reverted in v0.18.11)
+
+### v0.18.9
 - Add durable WebRTC connections with state machine
 - Implement automatic reconnection with exponential backoff
 - Add message buffering during disconnections
