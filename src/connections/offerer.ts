@@ -2,11 +2,11 @@
  * Offerer-side WebRTC connection with offer creation and answer processing
  */
 
-import { RondevuConnection } from './connection.js'
-import { ConnectionState } from './connection-events.js'
-import { RondevuAPI } from './api.js'
-import { ConnectionConfig } from './connection-config.js'
-import { AsyncLock } from './async-lock.js'
+import { RondevuConnection } from './base.js'
+import { ConnectionState } from './events.js'
+import { RondevuAPI } from '../api/client.js'
+import { ConnectionConfig } from './config.js'
+import { AsyncLock } from '../utils/async-lock.js'
 
 export interface OffererOptions {
     api: RondevuAPI

@@ -4,21 +4,21 @@
  */
 
 export { Rondevu, RondevuError, NetworkError, ValidationError, ConnectionError } from './rondevu.js'
-export { RondevuAPI } from './api.js'
-export { RpcBatcher } from './rpc-batcher.js'
+export { RondevuAPI } from '../api/client.js'
+export { RpcBatcher } from '../api/batcher.js'
 
 // Export connection classes
-export { RondevuConnection } from './connection.js'
-export { OffererConnection } from './offerer-connection.js'
-export { AnswererConnection } from './answerer-connection.js'
+export { RondevuConnection } from '../connections/base.js'
+export { OffererConnection } from '../connections/offerer.js'
+export { AnswererConnection } from '../connections/answerer.js'
 
 // Export utilities
-export { ExponentialBackoff } from './exponential-backoff.js'
-export { MessageBuffer } from './message-buffer.js'
+export { ExponentialBackoff } from '../utils/exponential-backoff.js'
+export { MessageBuffer } from '../utils/message-buffer.js'
 
 // Export crypto adapters
-export { WebCryptoAdapter } from './web-crypto-adapter.js'
-export { NodeCryptoAdapter } from './node-crypto-adapter.js'
+export { WebCryptoAdapter } from '../crypto/web.js'
+export { NodeCryptoAdapter } from '../crypto/node.js'
 
 // Export types
 export type {
@@ -33,7 +33,7 @@ export type {
     Service,
     ServiceOffer,
     IceCandidate,
-} from './api.js'
+} from '../api/client.js'
 
 export type {
     RondevuOptions,
@@ -48,12 +48,12 @@ export type {
     PaginatedServiceResult
 } from './rondevu.js'
 
-export type { CryptoAdapter } from './crypto-adapter.js'
+export type { CryptoAdapter } from '../crypto/adapter.js'
 
 // Export connection types
 export type {
     ConnectionConfig,
-} from './connection-config.js'
+} from '../connections/config.js'
 
 export type {
     ConnectionState,
@@ -63,13 +63,13 @@ export type {
     ConnectionEventMap,
     ConnectionEventName,
     ConnectionEventArgs,
-} from './connection-events.js'
+} from '../connections/events.js'
 
 export type {
     OffererOptions,
-} from './offerer-connection.js'
+} from '../connections/offerer.js'
 
 export type {
     AnswererOptions,
-} from './answerer-connection.js'
+} from '../connections/answerer.js'
 

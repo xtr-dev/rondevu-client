@@ -4,7 +4,7 @@
  */
 
 import * as ed25519 from '@noble/ed25519'
-import { CryptoAdapter, Keypair } from './crypto-adapter.js'
+import { CryptoAdapter, Keypair } from './adapter.js'
 
 /**
  * Node.js Crypto implementation using Node.js built-in APIs

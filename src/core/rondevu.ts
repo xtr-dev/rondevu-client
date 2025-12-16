@@ -1,9 +1,9 @@
-import { RondevuAPI, Keypair, IceCandidate, BatcherOptions } from './api.js'
-import { CryptoAdapter } from './crypto-adapter.js'
+import { RondevuAPI, Keypair, IceCandidate, BatcherOptions } from '../api/client.js'
+import { CryptoAdapter } from '../crypto/adapter.js'
 import { EventEmitter } from 'eventemitter3'
-import { OffererConnection } from './offerer-connection.js'
-import { AnswererConnection } from './answerer-connection.js'
-import { ConnectionConfig } from './connection-config.js'
+import { OffererConnection } from '../connections/offerer.js'
+import { AnswererConnection } from '../connections/answerer.js'
+import { ConnectionConfig } from '../connections/config.js'
 import { OfferPool } from './offer-pool.js'
 
 // ICE server preset names

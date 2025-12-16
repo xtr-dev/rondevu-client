@@ -2,10 +2,10 @@
  * Answerer-side WebRTC connection with answer creation and offer processing
  */
 
-import { RondevuConnection } from './connection.js'
-import { ConnectionState } from './connection-events.js'
-import { RondevuAPI } from './api.js'
-import { ConnectionConfig } from './connection-config.js'
+import { RondevuConnection } from './base.js'
+import { ConnectionState } from './events.js'
+import { RondevuAPI } from '../api/client.js'
+import { ConnectionConfig } from './config.js'
 
 export interface AnswererOptions {
     api: RondevuAPI

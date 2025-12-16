@@ -1,8 +1,8 @@
 import { EventEmitter } from 'eventemitter3'
-import { RondevuAPI } from './api.js'
-import { OffererConnection } from './offerer-connection.js'
-import { ConnectionConfig } from './connection-config.js'
-import { AsyncLock } from './async-lock.js'
+import { RondevuAPI } from '../api/client.js'
+import { OffererConnection } from '../connections/offerer.js'
+import { ConnectionConfig } from '../connections/config.js'
+import { AsyncLock } from '../utils/async-lock.js'
 
 export type OfferFactory = (pc: RTCPeerConnection) => Promise<{
     dc?: RTCDataChannel

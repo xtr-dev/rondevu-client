@@ -2,7 +2,7 @@
  * Message buffering system for storing messages during disconnections
  */
 
-import { BufferedMessage } from './connection-events.js'
+import { BufferedMessage } from '../connections/events.js'
 
 export interface MessageBufferConfig {
     maxSize: number       // Maximum number of messages to buffer

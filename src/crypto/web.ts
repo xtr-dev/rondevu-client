@@ -3,7 +3,7 @@
  */
 
 import * as ed25519 from '@noble/ed25519'
-import { CryptoAdapter, Keypair } from './crypto-adapter.js'
+import { CryptoAdapter, Keypair } from './adapter.js'
 
 // Set SHA-512 hash function for ed25519 (required in @noble/ed25519 v3+)
 ed25519.hashes.sha512Async = async (message: Uint8Array) => {

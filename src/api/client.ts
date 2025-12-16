@@ -2,12 +2,12 @@
  * Rondevu API Client - RPC interface
  */
 
-import { CryptoAdapter, Keypair } from './crypto-adapter.js'
-import { WebCryptoAdapter } from './web-crypto-adapter.js'
-import { RpcBatcher, BatcherOptions } from './rpc-batcher.js'
+import { CryptoAdapter, Keypair } from '../crypto/adapter.js'
+import { WebCryptoAdapter } from '../crypto/web.js'
+import { RpcBatcher, BatcherOptions } from './batcher.js'
 
-export type { Keypair } from './crypto-adapter.js'
-export type { BatcherOptions } from './rpc-batcher.js'
+export type { Keypair } from '../crypto/adapter.js'
+export type { BatcherOptions } from './batcher.js'
 
 export interface OfferRequest {
     sdp: string

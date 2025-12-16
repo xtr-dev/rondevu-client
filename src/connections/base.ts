@@ -3,16 +3,16 @@
  */
 
 import { EventEmitter } from 'eventemitter3'
-import { ConnectionConfig, mergeConnectionConfig } from './connection-config.js'
+import { ConnectionConfig, mergeConnectionConfig } from './config.js'
 import {
     ConnectionState,
     ConnectionEventMap,
     ConnectionEventName,
     ConnectionEventArgs,
     BufferedMessage,
-} from './connection-events.js'
-import { ExponentialBackoff } from './exponential-backoff.js'
-import { MessageBuffer } from './message-buffer.js'
+} from './events.js'
+import { ExponentialBackoff } from '../utils/exponential-backoff.js'
+import { MessageBuffer } from '../utils/message-buffer.js'
 
 /**
  * Abstract base class for WebRTC connections with durability features
