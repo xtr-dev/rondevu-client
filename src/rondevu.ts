@@ -470,6 +470,10 @@ export class Rondevu extends EventEmitter {
             this.emit('offer:created', offerId, serviceFqn)
         })
 
+        this.offerPool.on('connection:rotated', (oldOfferId, newOfferId, connection) => {
+            this.emit('connection:rotated', oldOfferId, newOfferId, connection)
+        })
+
         this.usernameClaimed = true
     }
 

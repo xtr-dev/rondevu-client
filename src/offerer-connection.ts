@@ -6,6 +6,7 @@ import { RondevuConnection } from './connection.js'
 import { ConnectionState } from './connection-events.js'
 import { RondevuAPI } from './api.js'
 import { ConnectionConfig } from './connection-config.js'
+import { AsyncLock } from './async-lock.js'
 
 export interface OffererOptions {
     api: RondevuAPI
@@ -23,6 +24,12 @@ export class OffererConnection extends RondevuConnection {
     private api: RondevuAPI
     private serviceFqn: string
     private offerId: string
+
+    // Rotation tracking
+    private rotationLock = new AsyncLock()
+    private rotating = false
+    private rotationAttempts = 0
+    private static readonly MAX_ROTATION_ATTEMPTS = 5
 
     constructor(options: OffererOptions) {
         // Force reconnectEnabled: false for offerer connections (offers are ephemeral)
@@ -113,6 +120,87 @@ export class OffererConnection extends RondevuConnection {
             this.debug('Failed to set remote description:', error)
             throw error
         }
+    }
+
+    /**
+     * Rebind this connection to a new offer (when previous offer failed)
+     * Keeps the same connection object alive but with new underlying WebRTC
+     */
+    async rebindToOffer(
+        newOfferId: string,
+        newPc: RTCPeerConnection,
+        newDc?: RTCDataChannel
+    ): Promise<void> {
+        return this.rotationLock.run(async () => {
+            if (this.rotating) {
+                throw new Error('Rotation already in progress')
+            }
+            this.rotating = true
+
+            try {
+                this.rotationAttempts++
+                if (this.rotationAttempts > OffererConnection.MAX_ROTATION_ATTEMPTS) {
+                    throw new Error('Max rotation attempts exceeded')
+                }
+
+                this.debug(`Rebinding connection from ${this.offerId} to ${newOfferId}`)
+
+                // 1. Clean up old peer connection
+                if (this.pc) {
+                    this.pc.close()
+                }
+                if (this.dc && this.dc !== newDc) {
+                    this.dc.close()
+                }
+
+                // 2. Update to new offer
+                this.offerId = newOfferId
+                this.pc = newPc
+                this.dc = newDc || null
+
+                // 3. Reset answer processing flags
+                this.answerProcessed = false
+                this.answerSdpFingerprint = null
+
+                // 4. Setup event handlers for new peer connection
+                this.pc.onicecandidate = (event) => this.handleIceCandidate(event)
+                this.pc.oniceconnectionstatechange = () => this.handleIceConnectionStateChange()
+                this.pc.onconnectionstatechange = () => this.handleConnectionStateChange()
+                this.pc.onicegatheringstatechange = () => this.handleIceGatheringStateChange()
+
+                // 5. Setup data channel handlers if we have one
+                if (this.dc) {
+                    this.setupDataChannelHandlers(this.dc)
+                }
+
+                // 6. Restart connection timeout
+                this.startConnectionTimeout()
+
+                // 7. Transition to SIGNALING state (waiting for answer)
+                this.transitionTo(ConnectionState.SIGNALING, 'Offer rotated, waiting for answer')
+
+                // Note: Message buffer is NOT cleared - it persists!
+                this.debug(`Rebind complete. Buffer has ${this.messageBuffer?.size() ?? 0} messages`)
+            } finally {
+                this.rotating = false
+            }
+        })
+    }
+
+    /**
+     * Check if connection is currently rotating
+     */
+    isRotating(): boolean {
+        return this.rotating
+    }
+
+    /**
+     * Override onConnected to reset rotation attempts
+     */
+    protected onConnected(): void {
+        super.onConnected()
+        this.rotationAttempts = 0
+        this.debug('Connection established, rotation attempts reset')
     }
 
     /**

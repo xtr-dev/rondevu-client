@@ -24,6 +24,7 @@ interface OfferPoolEvents {
     'connection:opened': (offerId: string, connection: OffererConnection) => void
     'offer:created': (offerId: string, serviceFqn: string) => void
     'offer:failed': (offerId: string, error: Error) => void
+    'connection:rotated': (oldOfferId: string, newOfferId: string, connection: OffererConnection) => void
 }
 
 /**
@@ -99,6 +100,9 @@ export class OfferPool extends EventEmitter<OfferPoolEvents> {
 
         // Close all active connections
         for (const [offerId, connection] of this.activeConnections.entries()) {
+            if (connection.isRotating()) {
+                this.debug(`Connection ${offerId} is rotating, will close anyway`)
+            }
             this.debug(`Closing connection ${offerId}`)
             connection.close()
         }
@@ -164,6 +168,52 @@ export class OfferPool extends EventEmitter<OfferPoolEvents> {
     }
 
     /**
+     * Create a new offer for rotation (reuses existing creation logic)
+     * Similar to createOffer() but only creates the offer, doesn't create connection
+     */
+    private async createNewOfferForRotation(): Promise<{
+        newOfferId: string
+        pc: RTCPeerConnection
+        dc?: RTCDataChannel
+    }> {
+        const rtcConfig: RTCConfiguration = {
+            iceServers: this.iceServers
+        }
+
+        this.debug('Creating new offer for rotation...')
+
+        // 1. Create RTCPeerConnection
+        const pc = new RTCPeerConnection(rtcConfig)
+
+        // 2. Call the factory to create offer
+        let dc: RTCDataChannel | undefined
+        let offer: RTCSessionDescriptionInit
+        try {
+            const factoryResult = await this.offerFactory(pc)
+            dc = factoryResult.dc
+            offer = factoryResult.offer
+        } catch (err) {
+            pc.close()
+            throw err
+        }
+
+        // 3. Publish to server to get offerId
+        const result = await this.api.publishService({
+            serviceFqn: this.serviceFqn,
+            offers: [{ sdp: offer.sdp! }],
+            ttl: this.ttl,
+            signature: '',
+            message: '',
+        })
+
+        const newOfferId = result.offers[0].offerId
+
+        this.debug(`New offer created for rotation: ${newOfferId}`)
+
+        return { newOfferId, pc, dc }
+    }
+
+    /**
      * Create a single offer and publish it to the server
      */
     private async createOffer(): Promise<void> {
@@ -218,11 +268,31 @@ export class OfferPool extends EventEmitter<OfferPoolEvents> {
             this.emit('connection:opened', offerId, connection)
         })
 
-        connection.on('failed', (error) => {
-            this.debug(`Connection failed for offer ${offerId}:`, error)
-            this.activeConnections.delete(offerId)
-            this.emit('offer:failed', offerId, error)
-            this.fillOffers()  // Replace failed offer
+        connection.on('failed', async (error) => {
+            const currentOfferId = connection.getOfferId()
+            this.debug(`Connection failed for offer ${currentOfferId}, rotating...`)
+
+            try {
+                // Create new offer and rebind existing connection
+                const { newOfferId, pc, dc } = await this.createNewOfferForRotation()
+
+                // Rebind the connection to new offer
+                await connection.rebindToOffer(newOfferId, pc, dc)
+
+                // Update map: remove old offerId, add new offerId with same connection
+                this.activeConnections.delete(currentOfferId)
+                this.activeConnections.set(newOfferId, connection)
+
+                this.emit('connection:rotated', currentOfferId, newOfferId, connection)
+                this.debug(`Connection rotated: ${currentOfferId} → ${newOfferId}`)
+
+            } catch (rotationError) {
+                // If rotation fails, fall back to destroying connection
+                this.debug(`Rotation failed for ${currentOfferId}:`, rotationError)
+                this.activeConnections.delete(currentOfferId)
+                this.emit('offer:failed', currentOfferId, error)
+                this.fillOffers()  // Create replacement
+            }
         })
 
         connection.on('closed', () => {

@@ -15,12 +15,13 @@ TypeScript/JavaScript client for Rondevu, providing WebRTC signaling with **auto
 
 ## Features
 
-### ✨ New in v0.19.0
+### ✨ New in v0.20.0
 - **🔄 Automatic Reconnection**: Built-in exponential backoff for failed connections
 - **📦 Message Buffering**: Queues messages during disconnections, replays on reconnect
+- **🔄 Connection Persistence**: OffererConnection objects persist across disconnections via offer rotation
 - **📊 Connection State Machine**: Explicit lifecycle tracking with native RTC events
-- **🎯 Rich Event System**: 20+ events for monitoring connection health
-- **⚡ Improved Reliability**: ICE polling lifecycle management, proper cleanup
+- **🎯 Rich Event System**: 20+ events for monitoring connection health including `connection:rotated`
+- **⚡ Improved Reliability**: ICE polling lifecycle management, proper cleanup, rotation fallback
 - **🏗️ Internal Refactoring**: Cleaner codebase with OfferPool extraction and consolidated ICE polling
 
 ### Core Features
@@ -361,13 +362,58 @@ const connection = await rondevu.connectToService({
 - Advanced usage patterns
 - Username rules and service FQN format
 
+## Connection Persistence (v0.20.0+)
+
+Connection objects now persist across disconnections via **"offer rotation"**. When a connection fails, the same connection object is rebound to a new offer instead of being destroyed:
+
+```typescript
+rondevu.on('connection:opened', (offerId, connection) => {
+    console.log(`Connection ${offerId} opened`)
+
+    // Listen for offer rotation
+    rondevu.on('connection:rotated', (oldOfferId, newOfferId, conn) => {
+        if (conn === connection) {
+            console.log(`Connection rotated: ${oldOfferId} → ${newOfferId}`)
+            // Same connection object! Event listeners still work
+            // Message buffer preserved
+        }
+    })
+
+    connection.on('message', (data) => {
+        console.log('Received:', data)
+        // This listener continues working even after rotation
+    })
+
+    connection.on('failed', () => {
+        console.log('Connection failed, will auto-rotate to new offer')
+    })
+})
+```
+
+**Benefits:**
+- ✅ Same connection object remains usable through disconnections
+- ✅ Message buffer preserved during temporary disconnections
+- ✅ Event listeners don't need to be re-registered
+- ✅ Seamless reconnection experience for offerer side
+
 ## Examples
 
 - [React Demo](https://github.com/xtr-dev/rondevu-demo) - Full browser UI ([live](https://ronde.vu))
 
 ## Changelog
 
-### v0.19.0 (Latest)
+### v0.20.0 (Latest)
+- **Connection Persistence** - OffererConnection objects now persist across disconnections
+- **Offer Rotation** - When connection fails, same object is rebound to new offer
+- **Message Buffering** - Now works seamlessly on offerer side through rotations
+- **New Event**: `connection:rotated` emitted when offer is rotated
+- **Internal**: Added `OffererConnection.rebindToOffer()` method
+- **Internal**: Modified OfferPool failure handler to rotate offers instead of destroying connections
+- **Internal**: Added rotation lock to prevent concurrent rotations
+- **Internal**: Added max rotation attempts limit (default: 5)
+- 100% backward compatible - no breaking changes
+
+### v0.19.0
 - **Internal Refactoring** - Improved codebase maintainability (no API changes)
 - Extract OfferPool class for offer lifecycle management
 - Consolidate ICE polling logic (remove ~86 lines of duplicate code)
