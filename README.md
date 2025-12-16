@@ -15,12 +15,13 @@ TypeScript/JavaScript client for Rondevu, providing WebRTC signaling with **auto
 
 ## Features
 
-### ✨ New in v0.18.11
+### ✨ New in v0.19.0
 - **🔄 Automatic Reconnection**: Built-in exponential backoff for failed connections
 - **📦 Message Buffering**: Queues messages during disconnections, replays on reconnect
 - **📊 Connection State Machine**: Explicit lifecycle tracking with native RTC events
 - **🎯 Rich Event System**: 20+ events for monitoring connection health
 - **⚡ Improved Reliability**: ICE polling lifecycle management, proper cleanup
+- **🏗️ Internal Refactoring**: Cleaner codebase with OfferPool extraction and consolidated ICE polling
 
 ### Core Features
 - **Username Claiming**: Secure ownership with Ed25519 signatures
@@ -366,7 +367,15 @@ const connection = await rondevu.connectToService({
 
 ## Changelog
 
-### v0.18.11 (Latest)
+### v0.19.0 (Latest)
+- **Internal Refactoring** - Improved codebase maintainability (no API changes)
+- Extract OfferPool class for offer lifecycle management
+- Consolidate ICE polling logic (remove ~86 lines of duplicate code)
+- Add AsyncLock utility for race-free concurrent operations
+- Disable reconnection for offerer connections (offers are ephemeral)
+- 100% backward compatible - upgrade without code changes
+
+### v0.18.11
 - Restore EventEmitter-based durable connections (same as v0.18.9)
 - Durable WebRTC connections with state machine
 - Automatic reconnection with exponential backoff

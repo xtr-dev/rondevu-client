@@ -330,6 +330,73 @@ export abstract class RondevuConnection extends EventEmitter<ConnectionEventMap>
     }
 
     /**
+     * Get the API instance - subclasses must provide
+     */
+    protected abstract getApi(): any
+
+    /**
+     * Get the service FQN - subclasses must provide
+     */
+    protected abstract getServiceFqn(): string
+
+    /**
+     * Get the offer ID - subclasses must provide
+     */
+    protected abstract getOfferId(): string
+
+    /**
+     * Get the ICE candidate role this connection should accept.
+     * Returns null for no filtering (offerer), or specific role (answerer accepts 'offerer').
+     */
+    protected abstract getIceCandidateRole(): 'offerer' | null
+
+    /**
+     * Poll for remote ICE candidates (consolidated implementation)
+     * Subclasses implement getIceCandidateRole() to specify filtering
+     */
+    protected pollIceCandidates(): void {
+        const acceptRole = this.getIceCandidateRole()
+        const api = this.getApi()
+        const serviceFqn = this.getServiceFqn()
+        const offerId = this.getOfferId()
+
+        api
+            .getOfferIceCandidates(serviceFqn, offerId, this.lastIcePollTime)
+            .then((result: any) => {
+                if (result.candidates.length > 0) {
+                    this.debug(`Received ${result.candidates.length} remote ICE candidates`)
+
+                    for (const iceCandidate of result.candidates) {
+                        // Filter by role if specified (answerer only filters for 'offerer')
+                        if (acceptRole !== null && iceCandidate.role !== acceptRole) {
+                            continue
+                        }
+
+                        if (iceCandidate.candidate && this.pc) {
+                            const candidate = iceCandidate.candidate
+                            this.pc
+                                .addIceCandidate(new RTCIceCandidate(candidate))
+                                .then(() => {
+                                    this.emit('ice:candidate:remote', new RTCIceCandidate(candidate))
+                                })
+                                .catch((error) => {
+                                    this.debug('Failed to add ICE candidate:', error)
+                                })
+                        }
+
+                        // Update last poll time
+                        if (iceCandidate.createdAt > this.lastIcePollTime) {
+                            this.lastIcePollTime = iceCandidate.createdAt
+                        }
+                    }
+                }
+            })
+            .catch((error: any) => {
+                this.debug('Failed to poll ICE candidates:', error)
+            })
+    }
+
+    /**
      * Start connection timeout
      */
     protected startConnectionTimeout(): void {
@@ -562,6 +629,5 @@ export abstract class RondevuConnection extends EventEmitter<ConnectionEventMap>
 
     // Abstract methods to be implemented by subclasses
     protected abstract onLocalIceCandidate(candidate: RTCIceCandidate): void
-    protected abstract pollIceCandidates(): void
     protected abstract attemptReconnect(): void
 }

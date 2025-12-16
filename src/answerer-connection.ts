@@ -96,39 +96,24 @@ export class AnswererConnection extends RondevuConnection {
     }
 
     /**
-     * Poll for remote ICE candidates (from offerer)
+     * Get the API instance
      */
-    protected pollIceCandidates(): void {
-        this.api
-            .getOfferIceCandidates(this.serviceFqn, this.offerId, this.lastIcePollTime)
-            .then((result) => {
-                if (result.candidates.length > 0) {
-                    this.debug(`Received ${result.candidates.length} remote ICE candidates`)
+    protected getApi(): any {
+        return this.api
+    }
 
-                    for (const iceCandidate of result.candidates) {
-                        // Only process ICE candidates from the offerer
-                        if (iceCandidate.role === 'offerer' && iceCandidate.candidate && this.pc) {
-                            const candidate = iceCandidate.candidate
-                            this.pc
-                                .addIceCandidate(new RTCIceCandidate(candidate))
-                                .then(() => {
-                                    this.emit('ice:candidate:remote', new RTCIceCandidate(candidate))
-                                })
-                                .catch((error) => {
-                                    this.debug('Failed to add ICE candidate:', error)
-                                })
-                        }
+    /**
+     * Get the service FQN
+     */
+    protected getServiceFqn(): string {
+        return this.serviceFqn
+    }
 
-                        // Update last poll time
-                        if (iceCandidate.createdAt > this.lastIcePollTime) {
-                            this.lastIcePollTime = iceCandidate.createdAt
-                        }
-                    }
-                }
-            })
-            .catch((error) => {
-                this.debug('Failed to poll ICE candidates:', error)
-            })
+    /**
+     * Answerers accept ICE candidates from offerers only
+     */
+    protected getIceCandidateRole(): 'offerer' | null {
+        return 'offerer'
     }
 
     /**
