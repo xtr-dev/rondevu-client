@@ -107,13 +107,13 @@ export class RondevuAPI {
 
     /**
      * Generate authentication headers for RPC request
-     * Signs the payload (method + params) + timestamp
+     * Signs the payload (method + params + timestamp + username)
      */
     private async generateAuthHeaders(request: RpcRequest, includePublicKey: boolean = false): Promise<Record<string, string>> {
         const timestamp = Date.now()
 
-        // Create payload with timestamp for signing: { method, params, timestamp }
-        const payload = { ...request, timestamp }
+        // Create payload with timestamp and username for signing: { method, params, timestamp, username }
+        const payload = { ...request, timestamp, username: this.username }
 
         // Create canonical JSON representation for signing
         const canonical = this.canonicalJSON(payload)
@@ -124,6 +124,7 @@ export class RondevuAPI {
         const headers: Record<string, string> = {
             'X-Signature': signature,
             'X-Timestamp': timestamp.toString(),
+            'X-Username': this.username,
         }
 
         if (includePublicKey) {
