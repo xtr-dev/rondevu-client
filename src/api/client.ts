@@ -18,7 +18,7 @@ export interface ServiceRequest {
     offers: OfferRequest[]
     ttl?: number
     signature: string
-    message: string
+    timestamp: number
 }
 
 export interface ServiceOffer {
@@ -48,7 +48,7 @@ export interface IceCandidate {
  */
 interface RpcRequest {
     method: string
-    message: string
+    timestamp: number
     signature: string
     publicKey?: string
     params?: any
@@ -90,20 +90,45 @@ export class RondevuAPI {
     }
 
     /**
-     * Generate authentication parameters for RPC calls
+     * Create canonical JSON string with sorted keys for deterministic signing
      */
-    private async generateAuth(method: string, params: string = ''): Promise<{
-        message: string
+    private canonicalJSON(obj: any): string {
+        if (obj === null || obj === undefined) {
+            return JSON.stringify(obj)
+        }
+        if (typeof obj !== 'object') {
+            return JSON.stringify(obj)
+        }
+        if (Array.isArray(obj)) {
+            return '[' + obj.map(item => this.canonicalJSON(item)).join(',') + ']'
+        }
+
+        const sortedKeys = Object.keys(obj).sort()
+        const pairs = sortedKeys.map(key => {
+            return JSON.stringify(key) + ':' + this.canonicalJSON(obj[key])
+        })
+        return '{' + pairs.join(',') + '}'
+    }
+
+    /**
+     * Generate authentication signature for RPC request payload
+     */
+    private async generateAuth(request: Omit<RpcRequest, 'signature' | 'timestamp'>): Promise<{
+        timestamp: number
         signature: string
     }> {
         const timestamp = Date.now()
-        const message = params
-            ? `${method}:${this.username}:${params}:${timestamp}`
-            : `${method}:${this.username}:${timestamp}`
 
-        const signature = await this.crypto.signMessage(message, this.keypair.privateKey)
+        // Create complete request with timestamp but without signature
+        const payload = { ...request, timestamp }
 
-        return { message, signature }
+        // Create canonical JSON representation for signing
+        const canonical = this.canonicalJSON(payload)
+
+        // Sign the canonical representation
+        const signature = await this.crypto.signMessage(canonical, this.keypair.privateKey)
+
+        return { timestamp, signature }
     }
 
     /**
@@ -228,10 +253,13 @@ export class RondevuAPI {
      * Check if a username is available
      */
     async isUsernameAvailable(username: string): Promise<boolean> {
-        const auth = await this.generateAuth('getUser', username)
+        const auth = await this.generateAuth({
+            method: 'getUser',
+            params: { username },
+        })
         const result = await this.rpc({
             method: 'getUser',
-            message: auth.message,
+            timestamp: auth.timestamp,
             signature: auth.signature,
             params: { username },
         })
@@ -242,10 +270,13 @@ export class RondevuAPI {
      * Check if current username is claimed
      */
     async isUsernameClaimed(): Promise<boolean> {
-        const auth = await this.generateAuth('getUser', this.username)
+        const auth = await this.generateAuth({
+            method: 'getUser',
+            params: { username: this.username },
+        })
         const result = await this.rpc({
             method: 'getUser',
-            message: auth.message,
+            timestamp: auth.timestamp,
             signature: auth.signature,
             params: { username: this.username },
         })
@@ -260,10 +291,18 @@ export class RondevuAPI {
      * Publish a service
      */
     async publishService(service: ServiceRequest): Promise<Service> {
-        const auth = await this.generateAuth('publishService', service.serviceFqn)
+        const auth = await this.generateAuth({
+            method: 'publishService',
+            publicKey: this.keypair.publicKey,
+            params: {
+                serviceFqn: service.serviceFqn,
+                offers: service.offers,
+                ttl: service.ttl,
+            },
+        })
         return await this.rpc({
             method: 'publishService',
-            message: auth.message,
+            timestamp: auth.timestamp,
             signature: auth.signature,
             publicKey: this.keypair.publicKey,
             params: {
@@ -281,10 +320,17 @@ export class RondevuAPI {
         serviceFqn: string,
         options?: { limit?: number; offset?: number }
     ): Promise<any> {
-        const auth = await this.generateAuth('getService', serviceFqn)
+        const auth = await this.generateAuth({
+            method: 'getService',
+            publicKey: this.keypair.publicKey,
+            params: {
+                serviceFqn,
+                ...options,
+            },
+        })
         return await this.rpc({
             method: 'getService',
-            message: auth.message,
+            timestamp: auth.timestamp,
             signature: auth.signature,
             publicKey: this.keypair.publicKey,
             params: {
@@ -298,10 +344,14 @@ export class RondevuAPI {
      * Delete a service
      */
     async deleteService(serviceFqn: string): Promise<void> {
-        const auth = await this.generateAuth('deleteService', serviceFqn)
+        const auth = await this.generateAuth({
+            method: 'deleteService',
+            publicKey: this.keypair.publicKey,
+            params: { serviceFqn },
+        })
         await this.rpc({
             method: 'deleteService',
-            message: auth.message,
+            timestamp: auth.timestamp,
             signature: auth.signature,
             publicKey: this.keypair.publicKey,
             params: { serviceFqn },
@@ -316,10 +366,14 @@ export class RondevuAPI {
      * Answer an offer
      */
     async answerOffer(serviceFqn: string, offerId: string, sdp: string): Promise<void> {
-        const auth = await this.generateAuth('answerOffer', offerId)
+        const auth = await this.generateAuth({
+            method: 'answerOffer',
+            publicKey: this.keypair.publicKey,
+            params: { serviceFqn, offerId, sdp },
+        })
         await this.rpc({
             method: 'answerOffer',
-            message: auth.message,
+            timestamp: auth.timestamp,
             signature: auth.signature,
             publicKey: this.keypair.publicKey,
             params: { serviceFqn, offerId, sdp },
@@ -334,10 +388,14 @@ export class RondevuAPI {
         offerId: string
     ): Promise<{ sdp: string; offerId: string; answererId: string; answeredAt: number } | null> {
         try {
-            const auth = await this.generateAuth('getOfferAnswer', offerId)
+            const auth = await this.generateAuth({
+                method: 'getOfferAnswer',
+                publicKey: this.keypair.publicKey,
+                params: { serviceFqn, offerId },
+            })
             return await this.rpc({
                 method: 'getOfferAnswer',
-                message: auth.message,
+                timestamp: auth.timestamp,
                 signature: auth.signature,
                 publicKey: this.keypair.publicKey,
                 params: { serviceFqn, offerId },
@@ -371,10 +429,14 @@ export class RondevuAPI {
             }>
         >
     }> {
-        const auth = await this.generateAuth('poll')
+        const auth = await this.generateAuth({
+            method: 'poll',
+            publicKey: this.keypair.publicKey,
+            params: { since },
+        })
         return await this.rpc({
             method: 'poll',
-            message: auth.message,
+            timestamp: auth.timestamp,
             signature: auth.signature,
             publicKey: this.keypair.publicKey,
             params: { since },
@@ -389,10 +451,14 @@ export class RondevuAPI {
         offerId: string,
         candidates: RTCIceCandidateInit[]
     ): Promise<{ count: number; offerId: string }> {
-        const auth = await this.generateAuth('addIceCandidates', offerId)
+        const auth = await this.generateAuth({
+            method: 'addIceCandidates',
+            publicKey: this.keypair.publicKey,
+            params: { serviceFqn, offerId, candidates },
+        })
         return await this.rpc({
             method: 'addIceCandidates',
-            message: auth.message,
+            timestamp: auth.timestamp,
             signature: auth.signature,
             publicKey: this.keypair.publicKey,
             params: { serviceFqn, offerId, candidates },
@@ -407,10 +473,14 @@ export class RondevuAPI {
         offerId: string,
         since: number = 0
     ): Promise<{ candidates: IceCandidate[]; offerId: string }> {
-        const auth = await this.generateAuth('getIceCandidates', `${offerId}:${since}`)
+        const auth = await this.generateAuth({
+            method: 'getIceCandidates',
+            publicKey: this.keypair.publicKey,
+            params: { serviceFqn, offerId, since },
+        })
         const result = await this.rpc({
             method: 'getIceCandidates',
-            message: auth.message,
+            timestamp: auth.timestamp,
             signature: auth.signature,
             publicKey: this.keypair.publicKey,
             params: { serviceFqn, offerId, since },

@@ -203,7 +203,7 @@ export class OfferPool extends EventEmitter<OfferPoolEvents> {
             offers: [{ sdp: offer.sdp! }],
             ttl: this.ttl,
             signature: '',
-            message: '',
+            timestamp: 0,
         })
 
         const newOfferId = result.offers[0].offerId
@@ -244,7 +244,7 @@ export class OfferPool extends EventEmitter<OfferPoolEvents> {
             offers: [{ sdp: offer.sdp! }],
             ttl: this.ttl,
             signature: '',
-            message: '',
+            timestamp: 0,
         })
 
         const offerId = result.offers[0].offerId
