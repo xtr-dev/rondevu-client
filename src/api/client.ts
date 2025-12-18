@@ -17,8 +17,6 @@ export interface ServiceRequest {
     serviceFqn: string // Must include username: service:version@username
     offers: OfferRequest[]
     ttl?: number
-    signature: string
-    timestamp: number
 }
 
 export interface ServiceOffer {
@@ -44,13 +42,10 @@ export interface IceCandidate {
 }
 
 /**
- * RPC request format
+ * RPC request format (body only - auth in headers)
  */
 interface RpcRequest {
     method: string
-    timestamp: number
-    signature: string
-    publicKey?: string
     params?: any
 }
 
@@ -111,15 +106,13 @@ export class RondevuAPI {
     }
 
     /**
-     * Generate authentication signature for RPC request payload
+     * Generate authentication headers for RPC request
+     * Signs the payload (method + params) + timestamp
      */
-    private async generateAuth(request: Omit<RpcRequest, 'signature' | 'timestamp'>): Promise<{
-        timestamp: number
-        signature: string
-    }> {
+    private async generateAuthHeaders(request: RpcRequest, includePublicKey: boolean = false): Promise<Record<string, string>> {
         const timestamp = Date.now()
 
-        // Create complete request with timestamp but without signature
+        // Create payload with timestamp for signing: { method, params, timestamp }
         const payload = { ...request, timestamp }
 
         // Create canonical JSON representation for signing
@@ -128,29 +121,41 @@ export class RondevuAPI {
         // Sign the canonical representation
         const signature = await this.crypto.signMessage(canonical, this.keypair.privateKey)
 
-        return { timestamp, signature }
+        const headers: Record<string, string> = {
+            'X-Signature': signature,
+            'X-Timestamp': timestamp.toString(),
+        }
+
+        if (includePublicKey) {
+            headers['X-Public-Key'] = this.keypair.publicKey
+        }
+
+        return headers
     }
 
     /**
      * Execute RPC call with optional batching
      */
-    private async rpc(request: RpcRequest): Promise<any> {
+    private async rpc(request: RpcRequest, authHeaders: Record<string, string>): Promise<any> {
         // Use batcher if enabled
         if (this.batcher) {
             return await this.batcher.add(request)
         }
 
         // Direct call without batching
-        return await this.rpcDirect(request)
+        return await this.rpcDirect(request, authHeaders)
     }
 
     /**
      * Execute single RPC call directly (bypasses batcher)
      */
-    private async rpcDirect(request: RpcRequest): Promise<any> {
+    private async rpcDirect(request: RpcRequest, authHeaders: Record<string, string>): Promise<any> {
         const response = await fetch(`${this.baseUrl}/rpc`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                ...authHeaders,
+            },
             body: JSON.stringify(request),
         })
 
@@ -169,40 +174,13 @@ export class RondevuAPI {
 
     /**
      * Execute batch RPC calls directly (bypasses batcher)
+     * Note: Batching with auth headers is complex - each request needs its own signature
+     * For now, this will use the same auth headers for all requests in the batch
      */
     private async rpcBatchDirect(requests: RpcRequest[]): Promise<any[]> {
-        const response = await fetch(`${this.baseUrl}/rpc`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(requests),
-        })
-
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-        }
-
-        const results: RpcResponse[] = await response.json()
-
-        // Validate response is an array
-        if (!Array.isArray(results)) {
-            console.error('Invalid RPC batch response:', results)
-            throw new Error('Server returned invalid batch response (not an array)')
-        }
-
-        // Check response length matches request length
-        if (results.length !== requests.length) {
-            console.error(`Response length mismatch: expected ${requests.length}, got ${results.length}`)
-        }
-
-        return results.map((result, i) => {
-            if (!result || typeof result !== 'object') {
-                throw new Error(`Invalid response at index ${i}`)
-            }
-            if (!result.success) {
-                throw new Error(result.error || `RPC call ${i} failed`)
-            }
-            return result.result
-        })
+        // For batch requests, we'll need to handle auth differently
+        // This is a limitation of moving to header-based auth
+        throw new Error('Batch RPC calls not yet supported with header-based authentication')
     }
 
     // ============================================
@@ -253,16 +231,12 @@ export class RondevuAPI {
      * Check if a username is available
      */
     async isUsernameAvailable(username: string): Promise<boolean> {
-        const auth = await this.generateAuth({
+        const request: RpcRequest = {
             method: 'getUser',
             params: { username },
-        })
-        const result = await this.rpc({
-            method: 'getUser',
-            timestamp: auth.timestamp,
-            signature: auth.signature,
-            params: { username },
-        })
+        }
+        const authHeaders = await this.generateAuthHeaders(request, false)
+        const result = await this.rpc(request, authHeaders)
         return result.available
     }
 
@@ -270,16 +244,12 @@ export class RondevuAPI {
      * Check if current username is claimed
      */
     async isUsernameClaimed(): Promise<boolean> {
-        const auth = await this.generateAuth({
+        const request: RpcRequest = {
             method: 'getUser',
             params: { username: this.username },
-        })
-        const result = await this.rpc({
-            method: 'getUser',
-            timestamp: auth.timestamp,
-            signature: auth.signature,
-            params: { username: this.username },
-        })
+        }
+        const authHeaders = await this.generateAuthHeaders(request, false)
+        const result = await this.rpc(request, authHeaders)
         return !result.available
     }
 
@@ -291,26 +261,16 @@ export class RondevuAPI {
      * Publish a service
      */
     async publishService(service: ServiceRequest): Promise<Service> {
-        const auth = await this.generateAuth({
+        const request: RpcRequest = {
             method: 'publishService',
-            publicKey: this.keypair.publicKey,
             params: {
                 serviceFqn: service.serviceFqn,
                 offers: service.offers,
                 ttl: service.ttl,
             },
-        })
-        return await this.rpc({
-            method: 'publishService',
-            timestamp: auth.timestamp,
-            signature: auth.signature,
-            publicKey: this.keypair.publicKey,
-            params: {
-                serviceFqn: service.serviceFqn,
-                offers: service.offers,
-                ttl: service.ttl,
-            },
-        })
+        }
+        const authHeaders = await this.generateAuthHeaders(request, true)
+        return await this.rpc(request, authHeaders)
     }
 
     /**
@@ -320,42 +280,27 @@ export class RondevuAPI {
         serviceFqn: string,
         options?: { limit?: number; offset?: number }
     ): Promise<any> {
-        const auth = await this.generateAuth({
+        const request: RpcRequest = {
             method: 'getService',
-            publicKey: this.keypair.publicKey,
             params: {
                 serviceFqn,
                 ...options,
             },
-        })
-        return await this.rpc({
-            method: 'getService',
-            timestamp: auth.timestamp,
-            signature: auth.signature,
-            publicKey: this.keypair.publicKey,
-            params: {
-                serviceFqn,
-                ...options,
-            },
-        })
+        }
+        const authHeaders = await this.generateAuthHeaders(request, true)
+        return await this.rpc(request, authHeaders)
     }
 
     /**
      * Delete a service
      */
     async deleteService(serviceFqn: string): Promise<void> {
-        const auth = await this.generateAuth({
+        const request: RpcRequest = {
             method: 'deleteService',
-            publicKey: this.keypair.publicKey,
             params: { serviceFqn },
-        })
-        await this.rpc({
-            method: 'deleteService',
-            timestamp: auth.timestamp,
-            signature: auth.signature,
-            publicKey: this.keypair.publicKey,
-            params: { serviceFqn },
-        })
+        }
+        const authHeaders = await this.generateAuthHeaders(request, true)
+        await this.rpc(request, authHeaders)
     }
 
     // ============================================
@@ -366,18 +311,12 @@ export class RondevuAPI {
      * Answer an offer
      */
     async answerOffer(serviceFqn: string, offerId: string, sdp: string): Promise<void> {
-        const auth = await this.generateAuth({
+        const request: RpcRequest = {
             method: 'answerOffer',
-            publicKey: this.keypair.publicKey,
             params: { serviceFqn, offerId, sdp },
-        })
-        await this.rpc({
-            method: 'answerOffer',
-            timestamp: auth.timestamp,
-            signature: auth.signature,
-            publicKey: this.keypair.publicKey,
-            params: { serviceFqn, offerId, sdp },
-        })
+        }
+        const authHeaders = await this.generateAuthHeaders(request, true)
+        await this.rpc(request, authHeaders)
     }
 
     /**
@@ -388,18 +327,12 @@ export class RondevuAPI {
         offerId: string
     ): Promise<{ sdp: string; offerId: string; answererId: string; answeredAt: number } | null> {
         try {
-            const auth = await this.generateAuth({
+            const request: RpcRequest = {
                 method: 'getOfferAnswer',
-                publicKey: this.keypair.publicKey,
                 params: { serviceFqn, offerId },
-            })
-            return await this.rpc({
-                method: 'getOfferAnswer',
-                timestamp: auth.timestamp,
-                signature: auth.signature,
-                publicKey: this.keypair.publicKey,
-                params: { serviceFqn, offerId },
-            })
+            }
+            const authHeaders = await this.generateAuthHeaders(request, true)
+            return await this.rpc(request, authHeaders)
         } catch (err) {
             if ((err as Error).message.includes('not yet answered')) {
                 return null
@@ -429,18 +362,12 @@ export class RondevuAPI {
             }>
         >
     }> {
-        const auth = await this.generateAuth({
+        const request: RpcRequest = {
             method: 'poll',
-            publicKey: this.keypair.publicKey,
             params: { since },
-        })
-        return await this.rpc({
-            method: 'poll',
-            timestamp: auth.timestamp,
-            signature: auth.signature,
-            publicKey: this.keypair.publicKey,
-            params: { since },
-        })
+        }
+        const authHeaders = await this.generateAuthHeaders(request, true)
+        return await this.rpc(request, authHeaders)
     }
 
     /**
@@ -451,18 +378,12 @@ export class RondevuAPI {
         offerId: string,
         candidates: RTCIceCandidateInit[]
     ): Promise<{ count: number; offerId: string }> {
-        const auth = await this.generateAuth({
+        const request: RpcRequest = {
             method: 'addIceCandidates',
-            publicKey: this.keypair.publicKey,
             params: { serviceFqn, offerId, candidates },
-        })
-        return await this.rpc({
-            method: 'addIceCandidates',
-            timestamp: auth.timestamp,
-            signature: auth.signature,
-            publicKey: this.keypair.publicKey,
-            params: { serviceFqn, offerId, candidates },
-        })
+        }
+        const authHeaders = await this.generateAuthHeaders(request, true)
+        return await this.rpc(request, authHeaders)
     }
 
     /**
@@ -473,18 +394,12 @@ export class RondevuAPI {
         offerId: string,
         since: number = 0
     ): Promise<{ candidates: IceCandidate[]; offerId: string }> {
-        const auth = await this.generateAuth({
+        const request: RpcRequest = {
             method: 'getIceCandidates',
-            publicKey: this.keypair.publicKey,
             params: { serviceFqn, offerId, since },
-        })
-        const result = await this.rpc({
-            method: 'getIceCandidates',
-            timestamp: auth.timestamp,
-            signature: auth.signature,
-            publicKey: this.keypair.publicKey,
-            params: { serviceFqn, offerId, since },
-        })
+        }
+        const authHeaders = await this.generateAuthHeaders(request, true)
+        const result = await this.rpc(request, authHeaders)
 
         return {
             candidates: result.candidates || [],
