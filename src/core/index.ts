@@ -5,7 +5,6 @@
 
 export { Rondevu, RondevuError, NetworkError, ValidationError, ConnectionError } from './rondevu.js'
 export { RondevuAPI } from '../api/client.js'
-export { RpcBatcher } from '../api/batcher.js'
 
 // Export connection classes
 export { RondevuConnection } from '../connections/base.js'

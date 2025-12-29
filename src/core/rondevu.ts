@@ -1,4 +1,4 @@
-import { RondevuAPI, Credential, IceCandidate, BatcherOptions } from '../api/client.js'
+import { RondevuAPI, Credential, IceCandidate } from '../api/client.js'
 import { CryptoAdapter } from '../crypto/adapter.js'
 import { EventEmitter } from 'eventemitter3'
 import { OffererConnection } from '../connections/offerer.js'
@@ -58,7 +58,6 @@ export interface RondevuOptions {
     apiUrl: string
     credential?: Credential  // Optional, will generate if not provided
     cryptoAdapter?: CryptoAdapter  // Optional, defaults to WebCryptoAdapter
-    batching?: BatcherOptions | false  // Optional, defaults to disabled (fires parallel requests)
     iceServers?: IceServerPreset | RTCIceServer[]  // Optional: preset name or custom STUN/TURN servers
     debug?: boolean  // Optional: enable debug logging (default: false)
     // WebRTC polyfills for Node.js environments (e.g., wrtc)
@@ -243,7 +242,6 @@ export class Rondevu extends EventEmitter {
     private readonly apiUrl: string
     private credential: Credential
     private cryptoAdapter?: CryptoAdapter
-    private batchingOptions?: BatcherOptions | false
     private iceServers: RTCIceServer[]
     private debugEnabled: boolean
     private rtcPeerConnection?: typeof RTCPeerConnection
@@ -260,7 +258,6 @@ export class Rondevu extends EventEmitter {
         api: RondevuAPI,
         iceServers: RTCIceServer[],
         cryptoAdapter?: CryptoAdapter,
-        batchingOptions?: BatcherOptions | false,
         debugEnabled = false,
         rtcPeerConnection?: typeof RTCPeerConnection,
         rtcIceCandidate?: typeof RTCIceCandidate
@@ -271,15 +268,13 @@ export class Rondevu extends EventEmitter {
         this.api = api
         this.iceServers = iceServers
         this.cryptoAdapter = cryptoAdapter
-        this.batchingOptions = batchingOptions
         this.debugEnabled = debugEnabled
         this.rtcPeerConnection = rtcPeerConnection
         this.rtcIceCandidate = rtcIceCandidate
 
         this.debug('Instance created:', {
             name: this.credential.name,
-            hasIceServers: iceServers.length > 0,
-            batchingEnabled: batchingOptions !== false
+            hasIceServers: iceServers.length > 0
         })
     }
 
@@ -324,8 +319,7 @@ export class Rondevu extends EventEmitter {
         if (options.debug) {
             console.log('[Rondevu] Connecting:', {
                 hasCredential: !!options.credential,
-                iceServers: iceServers.length,
-                batchingEnabled: options.batching !== false
+                iceServers: iceServers.length
             })
         }
 
@@ -343,8 +337,7 @@ export class Rondevu extends EventEmitter {
         const api = new RondevuAPI(
             options.apiUrl,
             credential,
-            options.cryptoAdapter,
-            options.batching
+            options.cryptoAdapter
         )
         if (options.debug) console.log('[Rondevu] Created API instance')
 
@@ -354,7 +347,6 @@ export class Rondevu extends EventEmitter {
             api,
             iceServers,
             options.cryptoAdapter,
-            options.batching,
             options.debug || false,
             options.rtcPeerConnection,
             options.rtcIceCandidate
@@ -741,6 +733,7 @@ export class Rondevu extends EventEmitter {
      * @deprecated Use getName() instead
      */
     getUsername(): string {
+        console.warn('[Rondevu] getUsername() is deprecated. Use getName() instead.')
         return this.credential.name
     }
 

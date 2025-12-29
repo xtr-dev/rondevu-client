@@ -4,10 +4,8 @@
 
 import { CryptoAdapter, Credential } from '../crypto/adapter.js'
 import { WebCryptoAdapter } from '../crypto/web.js'
-import { RpcBatcher, BatcherOptions } from './batcher.js'
 
 export type { Credential } from '../crypto/adapter.js'
-export type { BatcherOptions } from './batcher.js'
 
 export interface OfferRequest {
     sdp: string
@@ -63,26 +61,14 @@ interface RpcResponse {
  */
 export class RondevuAPI {
     private crypto: CryptoAdapter
-    private batcher: RpcBatcher | null = null
 
     constructor(
         private baseUrl: string,
         private credential: Credential,
-        cryptoAdapter?: CryptoAdapter,
-        batcherOptions?: BatcherOptions | false
+        cryptoAdapter?: CryptoAdapter
     ) {
         // Use WebCryptoAdapter by default (browser environment)
         this.crypto = cryptoAdapter || new WebCryptoAdapter()
-
-        // Batching supported via parallel requests (not true HTTP batching)
-        // Each request gets its own auth headers (timestamp, nonce, signature)
-        // Disabled by default for simplicity - enable via batcherOptions
-        if (batcherOptions !== undefined && batcherOptions !== false) {
-            this.batcher = new RpcBatcher(
-                (requests) => this.rpcBatchDirect(requests),
-                batcherOptions
-            )
-        }
     }
 
     /**
@@ -123,22 +109,9 @@ export class RondevuAPI {
     }
 
     /**
-     * Execute RPC call with optional batching
+     * Execute RPC call
      */
     private async rpc(request: RpcRequest, authHeaders: Record<string, string>): Promise<any> {
-        // Use batcher if enabled
-        if (this.batcher) {
-            return await this.batcher.add(request)
-        }
-
-        // Direct call without batching
-        return await this.rpcDirect(request, authHeaders)
-    }
-
-    /**
-     * Execute single RPC call directly (bypasses batcher)
-     */
-    private async rpcDirect(request: RpcRequest, authHeaders: Record<string, string>): Promise<any> {
         const response = await fetch(`${this.baseUrl}/rpc`, {
             method: 'POST',
             headers: {
@@ -159,32 +132,6 @@ export class RondevuAPI {
         }
 
         return result.result
-    }
-
-    /**
-     * Execute batch RPC calls as parallel individual requests
-     * Each request gets its own signature/nonce for security
-     *
-     * Note: With header-based auth, true HTTP-level batching isn't possible
-     * since each request needs unique headers. Instead, we fire requests
-     * in parallel and collect responses.
-     */
-    private async rpcBatchDirect(requests: RpcRequest[]): Promise<any[]> {
-        // Fire all requests in parallel with individual auth headers
-        const promises = requests.map(async (request) => {
-            try {
-                const authHeaders = await this.generateAuthHeaders(request)
-                return await this.rpcDirect(request, authHeaders)
-            } catch (error) {
-                // Return error as result to maintain array alignment
-                return {
-                    success: false,
-                    error: error instanceof Error ? error.message : String(error)
-                }
-            }
-        })
-
-        return await Promise.all(promises)
     }
 
     // ============================================
