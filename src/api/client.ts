@@ -223,7 +223,7 @@ export class RondevuAPI {
      */
     async publishService(service: ServiceRequest): Promise<Service> {
         const request: RpcRequest = {
-            method: 'publishService',
+            method: 'publishOffer',
             params: {
                 serviceFqn: service.serviceFqn,
                 offers: service.offers,
@@ -242,7 +242,7 @@ export class RondevuAPI {
         options?: { limit?: number; offset?: number }
     ): Promise<any> {
         const request: RpcRequest = {
-            method: 'getService',
+            method: 'getOffer',
             params: {
                 serviceFqn,
                 ...options,
@@ -257,7 +257,7 @@ export class RondevuAPI {
      */
     async deleteService(serviceFqn: string): Promise<void> {
         const request: RpcRequest = {
-            method: 'deleteService',
+            method: 'deleteOffer',
             params: { serviceFqn },
         }
         const authHeaders = await this.generateAuthHeaders(request)
