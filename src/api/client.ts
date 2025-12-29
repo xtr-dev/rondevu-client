@@ -69,11 +69,31 @@ export class RondevuAPI {
     ) {
         // Use WebCryptoAdapter by default (browser environment)
         this.crypto = cryptoAdapter || new WebCryptoAdapter()
+
+        // Validate credential format early to provide clear error messages
+        if (!credential.name || typeof credential.name !== 'string') {
+            throw new Error('Invalid credential: name must be a non-empty string')
+        }
+        if (!credential.secret || typeof credential.secret !== 'string') {
+            throw new Error('Invalid credential: secret must be a non-empty string')
+        }
+        // Validate secret is valid hex (even length, only hex characters)
+        if (credential.secret.length % 2 !== 0) {
+            throw new Error('Invalid credential: secret must be a valid hex string (even length)')
+        }
+        if (!/^[0-9a-fA-F]+$/.test(credential.secret)) {
+            throw new Error('Invalid credential: secret must contain only hexadecimal characters')
+        }
     }
 
     /**
      * Build signature message following server format
      * Format: timestamp:nonce:method:JSON.stringify(params || {})
+     *
+     * NOTE: JSON.stringify() does not guarantee deterministic key ordering.
+     * This is acceptable because the server uses the same serialization approach,
+     * ensuring both client and server produce identical signatures for the same data.
+     * Both implementations rely on consistent object structure from the application layer.
      */
     private buildSignatureMessage(timestamp: number, nonce: string, method: string, params?: any): string {
         const paramsJson = JSON.stringify(params || {})

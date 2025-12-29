@@ -43,11 +43,24 @@ export class WebCryptoAdapter implements CryptoAdapter {
      * @throws Error if secret/signature format is invalid (not a verification failure)
      */
     async verifySignature(secret: string, message: string, signature: string): Promise<boolean> {
-        try {
-            // Validate inputs - throws on malformed data
-            const secretBytes = this.hexToBytes(secret)
-            const signatureBytes = this.base64ToBytes(signature)
+        // Validate inputs first - throws clear errors for malformed data
+        let secretBytes: Uint8Array
+        let signatureBytes: Uint8Array
 
+        try {
+            secretBytes = this.hexToBytes(secret)
+        } catch (error) {
+            throw new Error(`Invalid secret format: ${error instanceof Error ? error.message : String(error)}`)
+        }
+
+        try {
+            signatureBytes = this.base64ToBytes(signature)
+        } catch (error) {
+            throw new Error(`Invalid signature format: ${error instanceof Error ? error.message : String(error)}`)
+        }
+
+        // Perform HMAC verification
+        try {
             // Import secret as HMAC key for verification
             const key = await crypto.subtle.importKey(
                 'raw',
@@ -65,16 +78,8 @@ export class WebCryptoAdapter implements CryptoAdapter {
             // Returns false for signature mismatch (auth failure)
             return await crypto.subtle.verify('HMAC', key, signatureBytes as BufferSource, messageBytes)
         } catch (error) {
-            // Distinguish between invalid format (throw) vs failed verification (false)
-            const errorMsg = error instanceof Error ? error.message : String(error)
-
-            // Input validation errors - throw (programming error)
-            if (errorMsg.includes('hex') || errorMsg.includes('base64') || errorMsg.includes('length')) {
-                throw new Error(`Invalid signature format: ${errorMsg}`)
-            }
-
-            // System/crypto errors - throw (unexpected error)
-            throw new Error(`HMAC verification error: ${errorMsg}`)
+            // System/crypto errors - unexpected failures
+            throw new Error(`HMAC verification failed: ${error instanceof Error ? error.message : String(error)}`)
         }
     }
 
@@ -123,7 +128,13 @@ export class WebCryptoAdapter implements CryptoAdapter {
 
     base64ToBytes(base64: string): Uint8Array {
         const binString = atob(base64)
-        return Uint8Array.from(binString, char => char.codePointAt(0)!)
+        return Uint8Array.from(binString, char => {
+            const code = char.codePointAt(0)
+            if (code === undefined) {
+                throw new Error('Invalid character in base64 decoded string')
+            }
+            return code
+        })
     }
 
     randomBytes(length: number): Uint8Array {
