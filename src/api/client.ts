@@ -74,8 +74,21 @@ export class RondevuAPI {
         if (!credential.name || typeof credential.name !== 'string') {
             throw new Error('Invalid credential: name must be a non-empty string')
         }
+        // Validate name format (alphanumeric, dots, underscores, hyphens only)
+        if (credential.name.length > 256) {
+            throw new Error('Invalid credential: name must not exceed 256 characters')
+        }
+        if (!/^[a-zA-Z0-9._-]+$/.test(credential.name)) {
+            throw new Error('Invalid credential: name must contain only alphanumeric characters, dots, underscores, and hyphens')
+        }
+
+        // Validate secret
         if (!credential.secret || typeof credential.secret !== 'string') {
             throw new Error('Invalid credential: secret must be a non-empty string')
+        }
+        // Minimum 256 bits (64 hex characters) for security
+        if (credential.secret.length < 64) {
+            throw new Error('Invalid credential: secret must be at least 256 bits (64 hex characters)')
         }
         // Validate secret is valid hex (even length, only hex characters)
         if (credential.secret.length % 2 !== 0) {
@@ -87,17 +100,51 @@ export class RondevuAPI {
     }
 
     /**
+     * Canonical JSON serialization with sorted keys
+     * Ensures deterministic output regardless of property insertion order
+     */
+    private canonicalJSON(obj: any): string {
+        if (obj === null || obj === undefined) {
+            return JSON.stringify(obj)
+        }
+        if (typeof obj !== 'object') {
+            return JSON.stringify(obj)
+        }
+        if (Array.isArray(obj)) {
+            return '[' + obj.map(item => this.canonicalJSON(item)).join(',') + ']'
+        }
+        // Sort object keys alphabetically for deterministic output
+        const sortedKeys = Object.keys(obj).sort()
+        const pairs = sortedKeys.map(key => {
+            return JSON.stringify(key) + ':' + this.canonicalJSON(obj[key])
+        })
+        return '{' + pairs.join(',') + '}'
+    }
+
+    /**
      * Build signature message following server format
-     * Format: timestamp:nonce:method:JSON.stringify(params || {})
+     * Format: timestamp:nonce:method:canonicalJSON(params || {})
      *
-     * NOTE: JSON.stringify() does not guarantee deterministic key ordering.
-     * This is acceptable because the server uses the same serialization approach,
-     * ensuring both client and server produce identical signatures for the same data.
-     * Both implementations rely on consistent object structure from the application layer.
+     * Uses canonical JSON (sorted keys) to ensure deterministic serialization
+     * across different JavaScript engines and platforms.
      */
     private buildSignatureMessage(timestamp: number, nonce: string, method: string, params?: any): string {
-        const paramsJson = JSON.stringify(params || {})
+        const paramsJson = this.canonicalJSON(params || {})
         return `${timestamp}:${nonce}:${method}:${paramsJson}`
+    }
+
+    /**
+     * Generate cryptographically secure nonce
+     * Uses crypto.randomUUID() if available, falls back to secure random bytes
+     */
+    private generateNonce(): string {
+        // Prefer crypto.randomUUID() (122 bits entropy, widely supported)
+        if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+            return crypto.randomUUID()
+        }
+        // Fallback: 16 random bytes (128 bits) as hex string
+        const randomBytes = this.crypto.randomBytes(16)
+        return this.crypto.bytesToHex(randomBytes)
     }
 
     /**
@@ -105,16 +152,14 @@ export class RondevuAPI {
      * Uses HMAC-SHA256 signature with nonce for replay protection
      *
      * Security notes:
-     * - Nonce: crypto.randomUUID() uses crypto.getRandomValues() internally (cryptographically secure)
+     * - Nonce: Cryptographically secure random value (UUID or 128-bit hex)
      * - Timestamp: Prevents replay attacks outside the server's time window
      * - Signature: HMAC-SHA256 ensures message integrity and authenticity
      * - Server validates nonce uniqueness to prevent replay within time window
      */
     private async generateAuthHeaders(request: RpcRequest): Promise<Record<string, string>> {
         const timestamp = Date.now()
-        // crypto.randomUUID() is cryptographically secure (uses crypto.getRandomValues internally)
-        // Generates UUIDv4 with 122 bits of entropy - sufficient for replay protection
-        const nonce = crypto.randomUUID()
+        const nonce = this.generateNonce()
 
         // Build message and generate signature
         const message = this.buildSignatureMessage(timestamp, nonce, request.method, request.params)
@@ -170,36 +215,77 @@ export class RondevuAPI {
      *
      * @param baseUrl - Rondevu server URL
      * @param expiresAt - Optional custom expiry timestamp (defaults to 1 year)
+     * @param options - Optional: { maxRetries: number, timeout: number }
      * @returns Generated credential with name and secret
      */
     static async generateCredentials(
         baseUrl: string,
-        expiresAt?: number
+        expiresAt?: number,
+        options?: { maxRetries?: number; timeout?: number }
     ): Promise<Credential> {
+        const maxRetries = options?.maxRetries ?? 3
+        const timeout = options?.timeout ?? 30000 // 30 seconds
+        let lastError: Error | null = null
+
         const request: RpcRequest = {
             method: 'generateCredentials',
             params: expiresAt ? { expiresAt } : undefined,
         }
 
-        const response = await fetch(`${baseUrl}/rpc`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(request),
-        })
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
+            try {
+                // Create abort controller for timeout
+                const controller = new AbortController()
+                const timeoutId = setTimeout(() => controller.abort(), timeout)
 
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+                try {
+                    const response = await fetch(`${baseUrl}/rpc`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(request),
+                        signal: controller.signal
+                    })
+
+                    clearTimeout(timeoutId)
+
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+                    }
+
+                    const result: RpcResponse = await response.json()
+
+                    if (!result.success) {
+                        throw new Error(result.error || 'Failed to generate credentials')
+                    }
+
+                    return result.result as Credential
+                } finally {
+                    clearTimeout(timeoutId)
+                }
+            } catch (error) {
+                lastError = error as Error
+
+                // Don't retry on abort (timeout)
+                if (error instanceof Error && error.name === 'AbortError') {
+                    throw new Error(`Credential generation timed out after ${timeout}ms`)
+                }
+
+                // Don't retry on 4xx errors (client errors)
+                if (error instanceof Error && error.message.match(/HTTP 4\d\d/)) {
+                    throw error
+                }
+
+                // Retry with exponential backoff for network/server errors
+                if (attempt < maxRetries - 1) {
+                    const backoffMs = 1000 * Math.pow(2, attempt)
+                    await new Promise(resolve => setTimeout(resolve, backoffMs))
+                }
+            }
         }
 
-        const result: RpcResponse = await response.json()
-
-        if (!result.success) {
-            throw new Error(result.error || 'Failed to generate credentials')
-        }
-
-        return result.result as Credential
+        throw new Error(`Failed to generate credentials after ${maxRetries} attempts: ${lastError?.message || 'Unknown error'}`)
     }
 
     /**
