@@ -130,10 +130,14 @@ export class WebCryptoAdapter implements CryptoAdapter {
     }
 
     base64ToBytes(base64: string): Uint8Array {
+        // Decode base64 string to binary
+        // Note: Generic error messages intentional for security (prevents information leakage)
+        // verifySignature() wraps this for additional security in authentication path
         let binString: string
         try {
             binString = atob(base64)
         } catch (error) {
+            // Generic error - specific atob() error details intentionally not exposed
             throw new Error('Invalid base64 string')
         }
 

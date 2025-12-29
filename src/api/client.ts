@@ -128,6 +128,9 @@ export class RondevuAPI {
      *
      * Uses canonical JSON (sorted keys) to ensure deterministic serialization
      * across different JavaScript engines and platforms.
+     *
+     * Note: When params is undefined, it's serialized as "{}" (empty object).
+     * This matches the server's expectation for parameterless RPC calls.
      */
     private buildSignatureMessage(timestamp: number, nonce: string, method: string, params?: any): string {
         const paramsJson = this.canonicalJSON(params || {})
@@ -258,7 +261,6 @@ export class RondevuAPI {
                         signal: controller.signal
                     })
 
-                    clearTimeout(timeoutId)
                     httpStatus = response.status
 
                     if (!response.ok) {
@@ -285,6 +287,7 @@ export class RondevuAPI {
 
                     return credential as Credential
                 } finally {
+                    // Always clear timeout to prevent memory leaks
                     clearTimeout(timeoutId)
                 }
             } catch (error) {
