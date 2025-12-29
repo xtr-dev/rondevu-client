@@ -155,7 +155,32 @@ export class NodeCryptoAdapter implements CryptoAdapter {
 
     base64ToBytes(base64: string): Uint8Array {
         // Node.js Buffer provides native base64 decoding
-        return new Uint8Array(Buffer.from(base64, 'base64'))
+        // Validate base64 format first
+        if (!base64 || typeof base64 !== 'string') {
+            throw new Error('Invalid base64 string: must be a non-empty string')
+        }
+
+        try {
+            const buffer = Buffer.from(base64, 'base64')
+
+            // Check if decoding was successful (Buffer.from doesn't throw on invalid base64)
+            // Verify by re-encoding and comparing (handles padding correctly)
+            const reEncoded = buffer.toString('base64')
+            // Normalize padding for comparison
+            const normalizedInput = base64.replace(/=+$/, '')
+            const normalizedOutput = reEncoded.replace(/=+$/, '')
+
+            if (normalizedInput !== normalizedOutput) {
+                throw new Error('Invalid base64 string')
+            }
+
+            return new Uint8Array(buffer)
+        } catch (error) {
+            if (error instanceof Error && error.message.includes('Invalid base64')) {
+                throw error
+            }
+            throw new Error('Invalid base64 string')
+        }
     }
 
     randomBytes(length: number): Uint8Array {

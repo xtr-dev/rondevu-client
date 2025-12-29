@@ -138,11 +138,13 @@ export class RondevuAPI {
      * Uses crypto.randomUUID() if available, falls back to secure random bytes
      */
     private generateNonce(): string {
-        // Prefer crypto.randomUUID() (122 bits entropy, widely supported)
+        // Prefer crypto.randomUUID() for widespread support and standard format
+        // UUIDv4 provides 122 bits of entropy (6 fixed version/variant bits)
         if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
             return crypto.randomUUID()
         }
-        // Fallback: 16 random bytes (128 bits) as hex string
+        // Fallback: 16 random bytes (128 bits entropy) as hex string
+        // Slightly more entropy than UUID, but both are cryptographically secure
         const randomBytes = this.crypto.randomBytes(16)
         return this.crypto.bytesToHex(randomBytes)
     }
@@ -154,8 +156,13 @@ export class RondevuAPI {
      * Security notes:
      * - Nonce: Cryptographically secure random value (UUID or 128-bit hex)
      * - Timestamp: Prevents replay attacks outside the server's time window
+     *   - Server validates timestamp is within acceptable range (typically ±5 minutes)
+     *   - Tolerates reasonable clock skew between client and server
+     *   - Requests with stale timestamps are rejected
      * - Signature: HMAC-SHA256 ensures message integrity and authenticity
      * - Server validates nonce uniqueness to prevent replay within time window
+     *   - Each nonce can only be used once within the timestamp validity window
+     *   - Server maintains nonce cache with expiration matching timestamp window
      */
     private async generateAuthHeaders(request: RpcRequest): Promise<Record<string, string>> {
         const timestamp = Date.now()
@@ -233,6 +240,8 @@ export class RondevuAPI {
         }
 
         for (let attempt = 0; attempt < maxRetries; attempt++) {
+            let httpStatus: number | null = null
+
             try {
                 // Create abort controller for timeout
                 const controller = new AbortController()
@@ -249,6 +258,7 @@ export class RondevuAPI {
                     })
 
                     clearTimeout(timeoutId)
+                    httpStatus = response.status
 
                     if (!response.ok) {
                         throw new Error(`HTTP ${response.status}: ${response.statusText}`)
@@ -260,7 +270,19 @@ export class RondevuAPI {
                         throw new Error(result.error || 'Failed to generate credentials')
                     }
 
-                    return result.result as Credential
+                    // Validate credential structure
+                    const credential = result.result
+                    if (!credential || typeof credential !== 'object') {
+                        throw new Error('Invalid credential response: result is not an object')
+                    }
+                    if (typeof credential.name !== 'string' || !credential.name) {
+                        throw new Error('Invalid credential response: missing or invalid name')
+                    }
+                    if (typeof credential.secret !== 'string' || !credential.secret) {
+                        throw new Error('Invalid credential response: missing or invalid secret')
+                    }
+
+                    return credential as Credential
                 } finally {
                     clearTimeout(timeoutId)
                 }
@@ -272,12 +294,12 @@ export class RondevuAPI {
                     throw new Error(`Credential generation timed out after ${timeout}ms`)
                 }
 
-                // Don't retry on 4xx errors (client errors)
-                if (error instanceof Error && error.message.match(/HTTP 4\d\d/)) {
+                // Don't retry on 4xx errors (client errors) - check actual status
+                if (httpStatus !== null && httpStatus >= 400 && httpStatus < 500) {
                     throw error
                 }
 
-                // Retry with exponential backoff for network/server errors
+                // Retry with exponential backoff for network/server errors (5xx or network failures)
                 if (attempt < maxRetries - 1) {
                     const backoffMs = 1000 * Math.pow(2, attempt)
                     await new Promise(resolve => setTimeout(resolve, backoffMs))

@@ -127,7 +127,13 @@ export class WebCryptoAdapter implements CryptoAdapter {
     }
 
     base64ToBytes(base64: string): Uint8Array {
-        const binString = atob(base64)
+        let binString: string
+        try {
+            binString = atob(base64)
+        } catch (error) {
+            throw new Error('Invalid base64 string')
+        }
+
         return Uint8Array.from(binString, char => {
             const code = char.codePointAt(0)
             if (code === undefined) {
