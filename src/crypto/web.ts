@@ -37,6 +37,8 @@ export class WebCryptoAdapter implements CryptoAdapter {
 
     /**
      * Verify HMAC-SHA256 signature
+     * Uses constant-time comparison via Web Crypto API to prevent timing attacks
+     * @throws Error if secret or signature format is invalid (not a signature mismatch)
      */
     async verifySignature(secret: string, message: string, signature: string): Promise<boolean> {
         try {
@@ -59,10 +61,11 @@ export class WebCryptoAdapter implements CryptoAdapter {
             const signatureBytes = this.base64ToBytes(signature)
 
             // Use Web Crypto API's verify() for constant-time comparison
+            // Returns false for invalid signatures, throws for system errors
             return await crypto.subtle.verify('HMAC', key, signatureBytes as BufferSource, messageBytes)
         } catch (error) {
-            console.error('Signature verification error:', error)
-            return false
+            // Re-throw with context - don't swallow system errors
+            throw new Error(`HMAC signature verification failed: ${error instanceof Error ? error.message : String(error)}`)
         }
     }
 

@@ -74,8 +74,10 @@ export class RondevuAPI {
         // Use WebCryptoAdapter by default (browser environment)
         this.crypto = cryptoAdapter || new WebCryptoAdapter()
 
-        // Create batcher if not explicitly disabled
-        if (batcherOptions !== false) {
+        // IMPORTANT: Batching disabled by default - not yet implemented with header-based auth
+        // Each request needs its own signature/nonce, making batching complex
+        // Set batcherOptions to enable batching (not recommended)
+        if (batcherOptions !== undefined && batcherOptions !== false) {
             this.batcher = new RpcBatcher(
                 (requests) => this.rpcBatchDirect(requests),
                 batcherOptions
@@ -169,15 +171,20 @@ export class RondevuAPI {
     /**
      * Generate new credentials (name + secret pair)
      * This is the entry point for new users - no authentication required
+     * Credentials are generated server-side to ensure security and uniqueness
+     *
+     * ⚠️ SECURITY NOTE:
+     * - Store the returned credential securely
+     * - The secret provides full access to this identity
+     * - Credentials should be persisted encrypted and never logged
+     *
      * @param baseUrl - Rondevu server URL
      * @param expiresAt - Optional custom expiry timestamp (defaults to 1 year)
-     * @param cryptoAdapter - Optional crypto adapter
      * @returns Generated credential with name and secret
      */
     static async generateCredentials(
         baseUrl: string,
-        expiresAt?: number,
-        cryptoAdapter?: CryptoAdapter
+        expiresAt?: number
     ): Promise<Credential> {
         const request: RpcRequest = {
             method: 'generateCredentials',

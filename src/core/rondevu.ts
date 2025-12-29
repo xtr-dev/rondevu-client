@@ -58,7 +58,7 @@ export interface RondevuOptions {
     apiUrl: string
     credential?: Credential  // Optional, will generate if not provided
     cryptoAdapter?: CryptoAdapter  // Optional, defaults to WebCryptoAdapter
-    batching?: BatcherOptions | false  // Optional, defaults to enabled with default options
+    batching?: BatcherOptions | false  // Optional, defaults to disabled (not yet implemented)
     iceServers?: IceServerPreset | RTCIceServer[]  // Optional: preset name or custom STUN/TURN servers
     debug?: boolean  // Optional: enable debug logging (default: false)
     // WebRTC polyfills for Node.js environments (e.g., wrtc)
@@ -333,7 +333,7 @@ export class Rondevu extends EventEmitter {
         let credential = options.credential
         if (!credential) {
             if (options.debug) console.log('[Rondevu] Generating new credentials...')
-            credential = await RondevuAPI.generateCredentials(options.apiUrl, undefined, options.cryptoAdapter)
+            credential = await RondevuAPI.generateCredentials(options.apiUrl)
             if (options.debug) console.log('[Rondevu] Generated credentials, name:', credential.name)
         } else {
             if (options.debug) console.log('[Rondevu] Using existing credential, name:', credential.name)
@@ -375,6 +375,12 @@ export class Rondevu extends EventEmitter {
     /**
      * Get the full credential (name + secret)
      * Use this to persist credentials for future sessions
+     *
+     * ⚠️ SECURITY WARNING:
+     * - The secret grants full access to this identity
+     * - Store credentials securely (encrypted storage, never in logs)
+     * - Never expose credentials in URLs, console output, or error messages
+     * - Treat the secret like a password or API key
      */
     getCredential(): Credential {
         return { ...this.credential }
