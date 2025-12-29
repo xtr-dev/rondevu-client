@@ -43,20 +43,23 @@ export class WebCryptoAdapter implements CryptoAdapter {
      * @throws Error if secret/signature format is invalid (not a verification failure)
      */
     async verifySignature(secret: string, message: string, signature: string): Promise<boolean> {
-        // Validate inputs first - throws clear errors for malformed data
+        // Validate inputs first
+        // Use generic error messages to prevent timing attacks and information leakage
         let secretBytes: Uint8Array
         let signatureBytes: Uint8Array
 
         try {
             secretBytes = this.hexToBytes(secret)
         } catch (error) {
-            throw new Error(`Invalid secret format: ${error instanceof Error ? error.message : String(error)}`)
+            // Generic error message - don't leak format details
+            throw new Error('Invalid credential format')
         }
 
         try {
             signatureBytes = this.base64ToBytes(signature)
         } catch (error) {
-            throw new Error(`Invalid signature format: ${error instanceof Error ? error.message : String(error)}`)
+            // Generic error message - don't leak format details
+            throw new Error('Invalid signature format')
         }
 
         // Perform HMAC verification

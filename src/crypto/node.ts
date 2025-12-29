@@ -70,20 +70,23 @@ export class NodeCryptoAdapter implements CryptoAdapter {
      * @throws Error if secret/signature format is invalid (not a verification failure)
      */
     async verifySignature(secret: string, message: string, signature: string): Promise<boolean> {
-        // Validate inputs first - throws clear errors for malformed data
+        // Validate inputs first
+        // Use generic error messages to prevent timing attacks and information leakage
         let secretBytes: Uint8Array
         let signatureBytes: Uint8Array
 
         try {
             secretBytes = this.hexToBytes(secret)
         } catch (error) {
-            throw new Error(`Invalid secret format: ${error instanceof Error ? error.message : String(error)}`)
+            // Generic error message - don't leak format details
+            throw new Error('Invalid credential format')
         }
 
         try {
             signatureBytes = this.base64ToBytes(signature)
         } catch (error) {
-            throw new Error(`Invalid signature format: ${error instanceof Error ? error.message : String(error)}`)
+            // Generic error message - don't leak format details
+            throw new Error('Invalid signature format')
         }
 
         // Perform HMAC verification
@@ -163,7 +166,12 @@ export class NodeCryptoAdapter implements CryptoAdapter {
         try {
             const buffer = Buffer.from(base64, 'base64')
 
-            // Check if decoding was successful (Buffer.from doesn't throw on invalid base64)
+            // Buffer.from silently ignores invalid base64 characters
+            // Check for empty buffer when input was non-empty (indicates invalid characters)
+            if (buffer.length === 0 && base64.length > 0) {
+                throw new Error('Invalid base64 string')
+            }
+
             // Verify by re-encoding and comparing (handles padding correctly)
             const reEncoded = buffer.toString('base64')
             // Normalize padding for comparison

@@ -75,8 +75,9 @@ export class RondevuAPI {
             throw new Error('Invalid credential: name must be a non-empty string')
         }
         // Validate name format (alphanumeric, dots, underscores, hyphens only)
-        if (credential.name.length > 256) {
-            throw new Error('Invalid credential: name must not exceed 256 characters')
+        // Limit to 128 characters to prevent HTTP header size issues
+        if (credential.name.length > 128) {
+            throw new Error('Invalid credential: name must not exceed 128 characters')
         }
         if (!/^[a-zA-Z0-9._-]+$/.test(credential.name)) {
             throw new Error('Invalid credential: name must contain only alphanumeric characters, dots, underscores, and hyphens')
@@ -299,9 +300,10 @@ export class RondevuAPI {
                     throw error
                 }
 
-                // Retry with exponential backoff for network/server errors (5xx or network failures)
+                // Retry with exponential backoff + jitter for network/server errors (5xx or network failures)
+                // Jitter prevents thundering herd when many clients retry simultaneously
                 if (attempt < maxRetries - 1) {
-                    const backoffMs = 1000 * Math.pow(2, attempt)
+                    const backoffMs = 1000 * Math.pow(2, attempt) + Math.random() * 1000
                     await new Promise(resolve => setTimeout(resolve, backoffMs))
                 }
             }
