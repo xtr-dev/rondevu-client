@@ -65,11 +65,15 @@ export class NodeCryptoAdapter implements CryptoAdapter {
     /**
      * Verify HMAC-SHA256 signature
      * Uses constant-time comparison via Web Crypto API to prevent timing attacks
-     * @throws Error if secret or signature format is invalid (not a signature mismatch)
+     *
+     * @returns false for invalid signatures, throws for malformed input
+     * @throws Error if secret/signature format is invalid (not a verification failure)
      */
     async verifySignature(secret: string, message: string, signature: string): Promise<boolean> {
         try {
+            // Validate inputs - throws on malformed data
             const secretBytes = this.hexToBytes(secret)
+            const signatureBytes = this.base64ToBytes(signature)
 
             // Import secret as HMAC key for verification
             const key = await crypto.subtle.importKey(
@@ -84,15 +88,20 @@ export class NodeCryptoAdapter implements CryptoAdapter {
             const encoder = new TextEncoder()
             const messageBytes = encoder.encode(message)
 
-            // Convert signature from base64 to bytes
-            const signatureBytes = this.base64ToBytes(signature)
-
             // Use Web Crypto API's verify() for constant-time comparison
-            // Returns false for invalid signatures, throws for system errors
+            // Returns false for signature mismatch (auth failure)
             return await crypto.subtle.verify('HMAC', key, signatureBytes as BufferSource, messageBytes)
         } catch (error) {
-            // Re-throw with context - don't swallow system errors
-            throw new Error(`HMAC signature verification failed: ${error instanceof Error ? error.message : String(error)}`)
+            // Distinguish between invalid format (throw) vs failed verification (false)
+            const errorMsg = error instanceof Error ? error.message : String(error)
+
+            // Input validation errors - throw (programming error)
+            if (errorMsg.includes('hex') || errorMsg.includes('base64') || errorMsg.includes('length')) {
+                throw new Error(`Invalid signature format: ${errorMsg}`)
+            }
+
+            // System/crypto errors - throw (unexpected error)
+            throw new Error(`HMAC verification error: ${errorMsg}`)
         }
     }
 
@@ -106,10 +115,16 @@ export class NodeCryptoAdapter implements CryptoAdapter {
 
     /**
      * Convert hex string to bytes
+     * @throws Error if hex string is invalid
      */
     hexToBytes(hex: string): Uint8Array {
         if (hex.length % 2 !== 0) {
             throw new Error('Hex string must have even length')
+        }
+
+        // Validate all characters are valid hex (0-9, a-f, A-F)
+        if (!/^[0-9a-fA-F]*$/.test(hex)) {
+            throw new Error('Invalid hex string: contains non-hex characters')
         }
 
         const bytes = new Uint8Array(hex.length / 2)

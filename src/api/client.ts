@@ -74,9 +74,9 @@ export class RondevuAPI {
         // Use WebCryptoAdapter by default (browser environment)
         this.crypto = cryptoAdapter || new WebCryptoAdapter()
 
-        // IMPORTANT: Batching disabled by default - not yet implemented with header-based auth
-        // Each request needs its own signature/nonce, making batching complex
-        // Set batcherOptions to enable batching (not recommended)
+        // Batching supported via parallel requests (not true HTTP batching)
+        // Each request gets its own auth headers (timestamp, nonce, signature)
+        // Disabled by default for simplicity - enable via batcherOptions
         if (batcherOptions !== undefined && batcherOptions !== false) {
             this.batcher = new RpcBatcher(
                 (requests) => this.rpcBatchDirect(requests),
@@ -97,9 +97,17 @@ export class RondevuAPI {
     /**
      * Generate authentication headers for RPC request
      * Uses HMAC-SHA256 signature with nonce for replay protection
+     *
+     * Security notes:
+     * - Nonce: crypto.randomUUID() uses crypto.getRandomValues() internally (cryptographically secure)
+     * - Timestamp: Prevents replay attacks outside the server's time window
+     * - Signature: HMAC-SHA256 ensures message integrity and authenticity
+     * - Server validates nonce uniqueness to prevent replay within time window
      */
     private async generateAuthHeaders(request: RpcRequest): Promise<Record<string, string>> {
         const timestamp = Date.now()
+        // crypto.randomUUID() is cryptographically secure (uses crypto.getRandomValues internally)
+        // Generates UUIDv4 with 122 bits of entropy - sufficient for replay protection
         const nonce = crypto.randomUUID()
 
         // Build message and generate signature
@@ -154,14 +162,29 @@ export class RondevuAPI {
     }
 
     /**
-     * Execute batch RPC calls directly (bypasses batcher)
-     * Note: Batching with auth headers is complex - each request needs its own signature
-     * For now, this will use the same auth headers for all requests in the batch
+     * Execute batch RPC calls as parallel individual requests
+     * Each request gets its own signature/nonce for security
+     *
+     * Note: With header-based auth, true HTTP-level batching isn't possible
+     * since each request needs unique headers. Instead, we fire requests
+     * in parallel and collect responses.
      */
     private async rpcBatchDirect(requests: RpcRequest[]): Promise<any[]> {
-        // For batch requests, we'll need to handle auth differently
-        // This is a limitation of moving to header-based auth
-        throw new Error('Batch RPC calls not yet supported with header-based authentication')
+        // Fire all requests in parallel with individual auth headers
+        const promises = requests.map(async (request) => {
+            try {
+                const authHeaders = await this.generateAuthHeaders(request)
+                return await this.rpcDirect(request, authHeaders)
+            } catch (error) {
+                // Return error as result to maintain array alignment
+                return {
+                    success: false,
+                    error: error instanceof Error ? error.message : String(error)
+                }
+            }
+        })
+
+        return await Promise.all(promises)
     }
 
     // ============================================

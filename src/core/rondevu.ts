@@ -58,7 +58,7 @@ export interface RondevuOptions {
     apiUrl: string
     credential?: Credential  // Optional, will generate if not provided
     cryptoAdapter?: CryptoAdapter  // Optional, defaults to WebCryptoAdapter
-    batching?: BatcherOptions | false  // Optional, defaults to disabled (not yet implemented)
+    batching?: BatcherOptions | false  // Optional, defaults to disabled (fires parallel requests)
     iceServers?: IceServerPreset | RTCIceServer[]  // Optional: preset name or custom STUN/TURN servers
     debug?: boolean  // Optional: enable debug logging (default: false)
     // WebRTC polyfills for Node.js environments (e.g., wrtc)
