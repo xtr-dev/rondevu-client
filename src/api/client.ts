@@ -2,11 +2,11 @@
  * Rondevu API Client - RPC interface
  */
 
-import { CryptoAdapter, Keypair } from '../crypto/adapter.js'
+import { CryptoAdapter, Credential } from '../crypto/adapter.js'
 import { WebCryptoAdapter } from '../crypto/web.js'
 import { RpcBatcher, BatcherOptions } from './batcher.js'
 
-export type { Keypair } from '../crypto/adapter.js'
+export type { Credential } from '../crypto/adapter.js'
 export type { BatcherOptions } from './batcher.js'
 
 export interface OfferRequest {
@@ -67,8 +67,7 @@ export class RondevuAPI {
 
     constructor(
         private baseUrl: string,
-        private username: string,
-        private keypair: Keypair,
+        private credential: Credential,
         cryptoAdapter?: CryptoAdapter,
         batcherOptions?: BatcherOptions | false
     ) {
@@ -85,53 +84,32 @@ export class RondevuAPI {
     }
 
     /**
-     * Create canonical JSON string with sorted keys for deterministic signing
+     * Build signature message following server format
+     * Format: timestamp:nonce:method:JSON.stringify(params || {})
      */
-    private canonicalJSON(obj: any): string {
-        if (obj === null || obj === undefined) {
-            return JSON.stringify(obj)
-        }
-        if (typeof obj !== 'object') {
-            return JSON.stringify(obj)
-        }
-        if (Array.isArray(obj)) {
-            return '[' + obj.map(item => this.canonicalJSON(item)).join(',') + ']'
-        }
-
-        const sortedKeys = Object.keys(obj).sort()
-        const pairs = sortedKeys.map(key => {
-            return JSON.stringify(key) + ':' + this.canonicalJSON(obj[key])
-        })
-        return '{' + pairs.join(',') + '}'
+    private buildSignatureMessage(timestamp: number, nonce: string, method: string, params?: any): string {
+        const paramsJson = JSON.stringify(params || {})
+        return `${timestamp}:${nonce}:${method}:${paramsJson}`
     }
 
     /**
      * Generate authentication headers for RPC request
-     * Signs the payload (method + params + timestamp + username)
+     * Uses HMAC-SHA256 signature with nonce for replay protection
      */
-    private async generateAuthHeaders(request: RpcRequest, includePublicKey: boolean = false): Promise<Record<string, string>> {
+    private async generateAuthHeaders(request: RpcRequest): Promise<Record<string, string>> {
         const timestamp = Date.now()
+        const nonce = crypto.randomUUID()
 
-        // Create payload with timestamp and username for signing: { method, params, timestamp, username }
-        const payload = { ...request, timestamp, username: this.username }
+        // Build message and generate signature
+        const message = this.buildSignatureMessage(timestamp, nonce, request.method, request.params)
+        const signature = await this.crypto.generateSignature(this.credential.secret, message)
 
-        // Create canonical JSON representation for signing
-        const canonical = this.canonicalJSON(payload)
-
-        // Sign the canonical representation
-        const signature = await this.crypto.signMessage(canonical, this.keypair.privateKey)
-
-        const headers: Record<string, string> = {
-            'X-Signature': signature,
+        return {
+            'X-Name': this.credential.name,
             'X-Timestamp': timestamp.toString(),
-            'X-Username': this.username,
+            'X-Nonce': nonce,
+            'X-Signature': signature,
         }
-
-        if (includePublicKey) {
-            headers['X-Public-Key'] = this.keypair.publicKey
-        }
-
-        return headers
     }
 
     /**
@@ -185,73 +163,55 @@ export class RondevuAPI {
     }
 
     // ============================================
-    // Ed25519 Cryptography Helpers
+    // Credential Management
     // ============================================
 
     /**
-     * Generate an Ed25519 keypair for username claiming and service publishing
-     * @param cryptoAdapter - Optional crypto adapter (defaults to WebCryptoAdapter)
+     * Generate new credentials (name + secret pair)
+     * This is the entry point for new users - no authentication required
+     * @param baseUrl - Rondevu server URL
+     * @param expiresAt - Optional custom expiry timestamp (defaults to 1 year)
+     * @param cryptoAdapter - Optional crypto adapter
+     * @returns Generated credential with name and secret
      */
-    static async generateKeypair(cryptoAdapter?: CryptoAdapter): Promise<Keypair> {
-        const adapter = cryptoAdapter || new WebCryptoAdapter()
-        return await adapter.generateKeypair()
-    }
-
-    /**
-     * Sign a message with an Ed25519 private key
-     * @param cryptoAdapter - Optional crypto adapter (defaults to WebCryptoAdapter)
-     */
-    static async signMessage(
-        message: string,
-        privateKeyBase64: string,
+    static async generateCredentials(
+        baseUrl: string,
+        expiresAt?: number,
         cryptoAdapter?: CryptoAdapter
-    ): Promise<string> {
-        const adapter = cryptoAdapter || new WebCryptoAdapter()
-        return await adapter.signMessage(message, privateKeyBase64)
-    }
-
-    /**
-     * Verify an Ed25519 signature
-     * @param cryptoAdapter - Optional crypto adapter (defaults to WebCryptoAdapter)
-     */
-    static async verifySignature(
-        message: string,
-        signatureBase64: string,
-        publicKeyBase64: string,
-        cryptoAdapter?: CryptoAdapter
-    ): Promise<boolean> {
-        const adapter = cryptoAdapter || new WebCryptoAdapter()
-        return await adapter.verifySignature(message, signatureBase64, publicKeyBase64)
-    }
-
-    // ============================================
-    // Username Management
-    // ============================================
-
-    /**
-     * Check if a username is available
-     */
-    async isUsernameAvailable(username: string): Promise<boolean> {
+    ): Promise<Credential> {
         const request: RpcRequest = {
-            method: 'getUser',
-            params: { username },
+            method: 'generateCredentials',
+            params: expiresAt ? { expiresAt } : undefined,
         }
-        const authHeaders = await this.generateAuthHeaders(request, false)
-        const result = await this.rpc(request, authHeaders)
-        return result.available
+
+        const response = await fetch(`${baseUrl}/rpc`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(request),
+        })
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+        }
+
+        const result: RpcResponse = await response.json()
+
+        if (!result.success) {
+            throw new Error(result.error || 'Failed to generate credentials')
+        }
+
+        return result.result as Credential
     }
 
     /**
-     * Check if current username is claimed
+     * Generate a random secret locally (for advanced use cases)
+     * @param cryptoAdapter - Optional crypto adapter
      */
-    async isUsernameClaimed(): Promise<boolean> {
-        const request: RpcRequest = {
-            method: 'getUser',
-            params: { username: this.username },
-        }
-        const authHeaders = await this.generateAuthHeaders(request, false)
-        const result = await this.rpc(request, authHeaders)
-        return !result.available
+    static generateSecret(cryptoAdapter?: CryptoAdapter): string {
+        const adapter = cryptoAdapter || new WebCryptoAdapter()
+        return adapter.generateSecret()
     }
 
     // ============================================
@@ -270,7 +230,7 @@ export class RondevuAPI {
                 ttl: service.ttl,
             },
         }
-        const authHeaders = await this.generateAuthHeaders(request, true)
+        const authHeaders = await this.generateAuthHeaders(request)
         return await this.rpc(request, authHeaders)
     }
 
@@ -288,7 +248,7 @@ export class RondevuAPI {
                 ...options,
             },
         }
-        const authHeaders = await this.generateAuthHeaders(request, true)
+        const authHeaders = await this.generateAuthHeaders(request)
         return await this.rpc(request, authHeaders)
     }
 
@@ -300,7 +260,7 @@ export class RondevuAPI {
             method: 'deleteService',
             params: { serviceFqn },
         }
-        const authHeaders = await this.generateAuthHeaders(request, true)
+        const authHeaders = await this.generateAuthHeaders(request)
         await this.rpc(request, authHeaders)
     }
 
@@ -316,7 +276,7 @@ export class RondevuAPI {
             method: 'answerOffer',
             params: { serviceFqn, offerId, sdp },
         }
-        const authHeaders = await this.generateAuthHeaders(request, true)
+        const authHeaders = await this.generateAuthHeaders(request)
         await this.rpc(request, authHeaders)
     }
 
@@ -332,7 +292,7 @@ export class RondevuAPI {
                 method: 'getOfferAnswer',
                 params: { serviceFqn, offerId },
             }
-            const authHeaders = await this.generateAuthHeaders(request, true)
+            const authHeaders = await this.generateAuthHeaders(request)
             return await this.rpc(request, authHeaders)
         } catch (err) {
             if ((err as Error).message.includes('not yet answered')) {
@@ -367,7 +327,7 @@ export class RondevuAPI {
             method: 'poll',
             params: { since },
         }
-        const authHeaders = await this.generateAuthHeaders(request, true)
+        const authHeaders = await this.generateAuthHeaders(request)
         return await this.rpc(request, authHeaders)
     }
 
@@ -383,7 +343,7 @@ export class RondevuAPI {
             method: 'addIceCandidates',
             params: { serviceFqn, offerId, candidates },
         }
-        const authHeaders = await this.generateAuthHeaders(request, true)
+        const authHeaders = await this.generateAuthHeaders(request)
         return await this.rpc(request, authHeaders)
     }
 
@@ -399,7 +359,7 @@ export class RondevuAPI {
             method: 'getIceCandidates',
             params: { serviceFqn, offerId, since },
         }
-        const authHeaders = await this.generateAuthHeaders(request, true)
+        const authHeaders = await this.generateAuthHeaders(request)
         const result = await this.rpc(request, authHeaders)
 
         return {

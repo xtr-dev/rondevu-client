@@ -3,8 +3,7 @@
  * Requires Node.js 19+ or Node.js 18 with --experimental-global-webcrypto flag
  */
 
-import * as ed25519 from '@noble/ed25519'
-import { CryptoAdapter, Keypair } from './adapter.js'
+import { CryptoAdapter } from './adapter.js'
 
 /**
  * Node.js Crypto implementation using Node.js built-in APIs
@@ -22,61 +21,108 @@ import { CryptoAdapter, Keypair } from './adapter.js'
  * const api = new RondevuAPI(
  *   'https://signal.example.com',
  *   'alice',
- *   keypair,
+ *   { name: 'alice', secret: '...' },
  *   new NodeCryptoAdapter()
  * )
  * ```
  */
 export class NodeCryptoAdapter implements CryptoAdapter {
     constructor() {
-        // Set SHA-512 hash function for ed25519 using Node's crypto.subtle
         if (typeof crypto === 'undefined' || !crypto.subtle) {
             throw new Error(
                 'crypto.subtle is not available. ' +
                 'Node.js 19+ is required, or Node.js 18 with --experimental-global-webcrypto flag'
             )
         }
-
-        ed25519.hashes.sha512Async = async (message: Uint8Array) => {
-            const hash = await crypto.subtle.digest('SHA-512', message as BufferSource)
-            return new Uint8Array(hash)
-        }
     }
 
-    async generateKeypair(): Promise<Keypair> {
-        const privateKey = ed25519.utils.randomSecretKey()
-        const publicKey = await ed25519.getPublicKeyAsync(privateKey)
+    /**
+     * Generate HMAC-SHA256 signature
+     */
+    async generateSignature(secret: string, message: string): Promise<string> {
+        const secretBytes = this.hexToBytes(secret)
 
-        return {
-            publicKey: this.bytesToBase64(publicKey),
-            privateKey: this.bytesToBase64(privateKey),
-        }
-    }
+        // Import secret as HMAC key
+        const key = await crypto.subtle.importKey(
+            'raw',
+            secretBytes as BufferSource,
+            { name: 'HMAC', hash: 'SHA-256' },
+            false,
+            ['sign']
+        )
 
-    async signMessage(message: string, privateKeyBase64: string): Promise<string> {
-        const privateKey = this.base64ToBytes(privateKeyBase64)
+        // Convert message to bytes
         const encoder = new TextEncoder()
         const messageBytes = encoder.encode(message)
-        const signature = await ed25519.signAsync(messageBytes, privateKey)
 
-        return this.bytesToBase64(signature)
+        // Generate HMAC signature
+        const signatureBytes = await crypto.subtle.sign('HMAC', key, messageBytes)
+
+        // Convert to base64
+        return this.bytesToBase64(new Uint8Array(signatureBytes))
     }
 
-    async verifySignature(
-        message: string,
-        signatureBase64: string,
-        publicKeyBase64: string
-    ): Promise<boolean> {
+    /**
+     * Verify HMAC-SHA256 signature
+     */
+    async verifySignature(secret: string, message: string, signature: string): Promise<boolean> {
         try {
-            const signature = this.base64ToBytes(signatureBase64)
-            const publicKey = this.base64ToBytes(publicKeyBase64)
+            const secretBytes = this.hexToBytes(secret)
+
+            // Import secret as HMAC key for verification
+            const key = await crypto.subtle.importKey(
+                'raw',
+                secretBytes as BufferSource,
+                { name: 'HMAC', hash: 'SHA-256' },
+                false,
+                ['verify']
+            )
+
+            // Convert message to bytes
             const encoder = new TextEncoder()
             const messageBytes = encoder.encode(message)
 
-            return await ed25519.verifyAsync(signature, messageBytes, publicKey)
-        } catch {
+            // Convert signature from base64 to bytes
+            const signatureBytes = this.base64ToBytes(signature)
+
+            // Use Web Crypto API's verify() for constant-time comparison
+            return await crypto.subtle.verify('HMAC', key, signatureBytes as BufferSource, messageBytes)
+        } catch (error) {
+            console.error('Signature verification error:', error)
             return false
         }
+    }
+
+    /**
+     * Generate a random secret (256-bit hex string)
+     */
+    generateSecret(): string {
+        const bytes = this.randomBytes(32) // 32 bytes = 256 bits
+        return this.bytesToHex(bytes)
+    }
+
+    /**
+     * Convert hex string to bytes
+     */
+    hexToBytes(hex: string): Uint8Array {
+        if (hex.length % 2 !== 0) {
+            throw new Error('Hex string must have even length')
+        }
+
+        const bytes = new Uint8Array(hex.length / 2)
+        for (let i = 0; i < hex.length; i += 2) {
+            bytes[i / 2] = parseInt(hex.slice(i, i + 2), 16)
+        }
+        return bytes
+    }
+
+    /**
+     * Convert bytes to hex string
+     */
+    bytesToHex(bytes: Uint8Array): string {
+        return Array.from(bytes)
+            .map(b => b.toString(16).padStart(2, '0'))
+            .join('')
     }
 
     bytesToBase64(bytes: Uint8Array): string {

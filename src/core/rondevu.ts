@@ -1,4 +1,4 @@
-import { RondevuAPI, Keypair, IceCandidate, BatcherOptions } from '../api/client.js'
+import { RondevuAPI, Credential, IceCandidate, BatcherOptions } from '../api/client.js'
 import { CryptoAdapter } from '../crypto/adapter.js'
 import { EventEmitter } from 'eventemitter3'
 import { OffererConnection } from '../connections/offerer.js'
@@ -56,8 +56,7 @@ export const ICE_SERVER_PRESETS: Record<IceServerPreset, RTCIceServer[]> = {
 
 export interface RondevuOptions {
     apiUrl: string
-    username?: string  // Optional, will generate anonymous if not provided
-    keypair?: Keypair  // Optional, will generate if not provided
+    credential?: Credential  // Optional, will generate if not provided
     cryptoAdapter?: CryptoAdapter  // Optional, defaults to WebCryptoAdapter
     batching?: BatcherOptions | false  // Optional, defaults to enabled with default options
     iceServers?: IceServerPreset | RTCIceServer[]  // Optional: preset name or custom STUN/TURN servers
@@ -242,9 +241,7 @@ export class Rondevu extends EventEmitter {
 
     private api: RondevuAPI
     private readonly apiUrl: string
-    private username: string
-    private keypair: Keypair
-    private usernameClaimed = false
+    private credential: Credential
     private cryptoAdapter?: CryptoAdapter
     private batchingOptions?: BatcherOptions | false
     private iceServers: RTCIceServer[]
@@ -259,8 +256,7 @@ export class Rondevu extends EventEmitter {
 
     private constructor(
         apiUrl: string,
-        username: string,
-        keypair: Keypair,
+        credential: Credential,
         api: RondevuAPI,
         iceServers: RTCIceServer[],
         cryptoAdapter?: CryptoAdapter,
@@ -271,8 +267,7 @@ export class Rondevu extends EventEmitter {
     ) {
         super()
         this.apiUrl = apiUrl
-        this.username = username
-        this.keypair = keypair
+        this.credential = credential
         this.api = api
         this.iceServers = iceServers
         this.cryptoAdapter = cryptoAdapter
@@ -282,8 +277,7 @@ export class Rondevu extends EventEmitter {
         this.rtcIceCandidate = rtcIceCandidate
 
         this.debug('Instance created:', {
-            username: this.username,
-            publicKey: this.keypair.publicKey,
+            name: this.credential.name,
             hasIceServers: iceServers.length > 0,
             batchingEnabled: batchingOptions !== false
         })
@@ -304,14 +298,11 @@ export class Rondevu extends EventEmitter {
      * @example
      * ```typescript
      * const rondevu = await Rondevu.connect({
-     *   apiUrl: 'https://api.ronde.vu',
-     *   username: 'alice'
+     *   apiUrl: 'https://api.ronde.vu'
      * })
      * ```
      */
     static async connect(options: RondevuOptions): Promise<Rondevu> {
-        const username = options.username || Rondevu.generateAnonymousUsername()
-
         // Apply WebRTC polyfills to global scope if provided (Node.js environments)
         if (options.rtcPeerConnection) {
             globalThis.RTCPeerConnection = options.rtcPeerConnection as any
@@ -332,28 +323,26 @@ export class Rondevu extends EventEmitter {
 
         if (options.debug) {
             console.log('[Rondevu] Connecting:', {
-                username,
-                hasKeypair: !!options.keypair,
+                hasCredential: !!options.credential,
                 iceServers: iceServers.length,
                 batchingEnabled: options.batching !== false
             })
         }
 
-        // Generate keypair if not provided
-        let keypair = options.keypair
-        if (!keypair) {
-            if (options.debug) console.log('[Rondevu] Generating new keypair...')
-            keypair = await RondevuAPI.generateKeypair(options.cryptoAdapter)
-            if (options.debug) console.log('[Rondevu] Generated keypair, publicKey:', keypair.publicKey)
+        // Generate credential if not provided
+        let credential = options.credential
+        if (!credential) {
+            if (options.debug) console.log('[Rondevu] Generating new credentials...')
+            credential = await RondevuAPI.generateCredentials(options.apiUrl, undefined, options.cryptoAdapter)
+            if (options.debug) console.log('[Rondevu] Generated credentials, name:', credential.name)
         } else {
-            if (options.debug) console.log('[Rondevu] Using existing keypair, publicKey:', keypair.publicKey)
+            if (options.debug) console.log('[Rondevu] Using existing credential, name:', credential.name)
         }
 
         // Create API instance
         const api = new RondevuAPI(
             options.apiUrl,
-            username,
-            keypair,
+            credential,
             options.cryptoAdapter,
             options.batching
         )
@@ -361,8 +350,7 @@ export class Rondevu extends EventEmitter {
 
         return new Rondevu(
             options.apiUrl,
-            username,
-            keypair,
+            credential,
             api,
             iceServers,
             options.cryptoAdapter,
@@ -373,35 +361,23 @@ export class Rondevu extends EventEmitter {
         )
     }
 
+    // ============================================
+    // Credential Access
+    // ============================================
+
     /**
-     * Generate an anonymous username with timestamp and random component
+     * Get the current credential name
      */
-    private static generateAnonymousUsername(): string {
-        const timestamp = Date.now().toString(36)
-        const random = Array.from(crypto.getRandomValues(new Uint8Array(3)))
-            .map(b => b.toString(16).padStart(2, '0')).join('')
-        return `anon-${timestamp}-${random}`
+    getName(): string {
+        return this.credential.name
     }
 
-    // ============================================
-    // Username Management
-    // ============================================
-
     /**
-     * Check if username has been claimed (checks with server)
+     * Get the full credential (name + secret)
+     * Use this to persist credentials for future sessions
      */
-    async isUsernameClaimed(): Promise<boolean> {
-        try {
-            const claimed = await this.api.isUsernameClaimed()
-
-            // Update internal flag to match server state
-            this.usernameClaimed = claimed
-
-            return claimed
-        } catch (err) {
-            console.error('Failed to check username claim status:', err)
-            return false
-        }
+    getCredential(): Credential {
+        return { ...this.credential }
     }
 
     // ============================================
@@ -444,8 +420,8 @@ export class Rondevu extends EventEmitter {
         this.currentService = service
         this.connectionConfig = connectionConfig
 
-        // Auto-append username to service
-        const serviceFqn = `${service}@${this.username}`
+        // Auto-append credential name to service
+        const serviceFqn = `${service}@${this.credential.name}`
 
         this.debug(`Publishing service: ${service} with maxOffers: ${maxOffers}`)
 
@@ -473,8 +449,6 @@ export class Rondevu extends EventEmitter {
         this.offerPool.on('connection:rotated', (oldOfferId, newOfferId, connection) => {
             this.emit('connection:rotated', oldOfferId, newOfferId, connection)
         })
-
-        this.usernameClaimed = true
     }
 
     /**
@@ -757,24 +731,11 @@ export class Rondevu extends EventEmitter {
     // ============================================
 
     /**
-     * Get the current keypair (for backup/storage)
-     */
-    getKeypair(): Keypair {
-        return this.keypair
-    }
-
-    /**
-     * Get the username
+     * Get the credential name
+     * @deprecated Use getName() instead
      */
     getUsername(): string {
-        return this.username
-    }
-
-    /**
-     * Get the public key
-     */
-    getPublicKey(): string {
-        return this.keypair.publicKey
+        return this.credential.name
     }
 
     /**
@@ -797,7 +758,7 @@ export class Rondevu extends EventEmitter {
             if (pc) {
                 offers.push({
                     offerId,
-                    serviceFqn: this.currentService ? `${this.currentService}@${this.username}` : '',
+                    serviceFqn: this.currentService ? `${this.currentService}@${this.credential.name}` : '',
                     pc,
                     dc: dc || undefined,
                     answered: connection.getState() === 'connected',

@@ -27,7 +27,7 @@ export type {
 } from './types.js'
 
 export type {
-    Keypair,
+    Credential,
     OfferRequest,
     ServiceRequest,
     Service,
