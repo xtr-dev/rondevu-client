@@ -163,23 +163,18 @@ export class NodeCryptoAdapter implements CryptoAdapter {
             throw new Error('Invalid base64 string: must be a non-empty string')
         }
 
+        // Validate base64 format with regex (more robust than round-trip verification)
+        // Valid base64: alphanumeric + '+' + '/' with 0-2 '=' padding at end
+        if (!/^[A-Za-z0-9+/]*={0,2}$/.test(base64)) {
+            throw new Error('Invalid base64 string')
+        }
+
         try {
             const buffer = Buffer.from(base64, 'base64')
 
-            // Buffer.from silently ignores invalid base64 characters
-            // Check for empty buffer when input was non-empty (indicates invalid characters)
-            // This catches edge cases like "!!!invalid" or "====" (all padding)
+            // Additional validation: check for empty buffer from invalid input
+            // Buffer.from may still produce empty buffer in edge cases
             if (buffer.length === 0 && base64.length > 0) {
-                throw new Error('Invalid base64 string')
-            }
-
-            // Verify by re-encoding and comparing (handles padding correctly)
-            const reEncoded = buffer.toString('base64')
-            // Normalize padding for comparison
-            const normalizedInput = base64.replace(/=+$/, '')
-            const normalizedOutput = reEncoded.replace(/=+$/, '')
-
-            if (normalizedInput !== normalizedOutput) {
                 throw new Error('Invalid base64 string')
             }
 

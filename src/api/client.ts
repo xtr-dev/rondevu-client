@@ -60,6 +60,12 @@ interface RpcResponse {
  * RondevuAPI - RPC-based API client for Rondevu signaling server
  */
 export class RondevuAPI {
+    // Default values for credential generation
+    private static readonly DEFAULT_MAX_RETRIES = 3
+    private static readonly DEFAULT_TIMEOUT_MS = 30000 // 30 seconds
+    private static readonly DEFAULT_CREDENTIAL_NAME_MAX_LENGTH = 128
+    private static readonly DEFAULT_SECRET_MIN_LENGTH = 64 // 256 bits
+
     private crypto: CryptoAdapter
 
     constructor(
@@ -75,9 +81,9 @@ export class RondevuAPI {
             throw new Error('Invalid credential: name must be a non-empty string')
         }
         // Validate name format (alphanumeric, dots, underscores, hyphens only)
-        // Limit to 128 characters to prevent HTTP header size issues
-        if (credential.name.length > 128) {
-            throw new Error('Invalid credential: name must not exceed 128 characters')
+        // Limit to prevent HTTP header size issues
+        if (credential.name.length > RondevuAPI.DEFAULT_CREDENTIAL_NAME_MAX_LENGTH) {
+            throw new Error(`Invalid credential: name must not exceed ${RondevuAPI.DEFAULT_CREDENTIAL_NAME_MAX_LENGTH} characters`)
         }
         if (!/^[a-zA-Z0-9._-]+$/.test(credential.name)) {
             throw new Error('Invalid credential: name must contain only alphanumeric characters, dots, underscores, and hyphens')
@@ -88,8 +94,8 @@ export class RondevuAPI {
             throw new Error('Invalid credential: secret must be a non-empty string')
         }
         // Minimum 256 bits (64 hex characters) for security
-        if (credential.secret.length < 64) {
-            throw new Error('Invalid credential: secret must be at least 256 bits (64 hex characters)')
+        if (credential.secret.length < RondevuAPI.DEFAULT_SECRET_MIN_LENGTH) {
+            throw new Error(`Invalid credential: secret must be at least 256 bits (${RondevuAPI.DEFAULT_SECRET_MIN_LENGTH} hex characters)`)
         }
         // Validate secret is valid hex (even length, only hex characters)
         if (credential.secret.length % 2 !== 0) {
@@ -262,8 +268,8 @@ export class RondevuAPI {
         expiresAt?: number,
         options?: { maxRetries?: number; timeout?: number }
     ): Promise<Credential> {
-        const maxRetries = options?.maxRetries ?? 3
-        const timeout = options?.timeout ?? 30000 // 30 seconds
+        const maxRetries = options?.maxRetries ?? RondevuAPI.DEFAULT_MAX_RETRIES
+        const timeout = options?.timeout ?? RondevuAPI.DEFAULT_TIMEOUT_MS
         let lastError: Error | null = null
 
         const request: RpcRequest = {
