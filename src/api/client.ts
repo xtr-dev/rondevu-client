@@ -105,16 +105,40 @@ export class RondevuAPI {
      * Ensures deterministic output regardless of property insertion order
      */
     private canonicalJSON(obj: any): string {
-        if (obj === null || obj === undefined) {
+        // Handle null
+        if (obj === null) {
+            return 'null'
+        }
+
+        // Handle undefined
+        if (obj === undefined) {
+            return JSON.stringify(undefined)
+        }
+
+        // Validate primitive types
+        const type = typeof obj
+
+        // Reject functions
+        if (type === 'function') {
+            throw new Error('Functions are not supported in RPC parameters')
+        }
+
+        // Validate numbers (reject NaN and Infinity)
+        if (type === 'number' && !Number.isFinite(obj)) {
+            throw new Error('NaN and Infinity are not supported in RPC parameters')
+        }
+
+        // Handle primitives (string, number, boolean)
+        if (type !== 'object') {
             return JSON.stringify(obj)
         }
-        if (typeof obj !== 'object') {
-            return JSON.stringify(obj)
-        }
+
+        // Handle arrays recursively
         if (Array.isArray(obj)) {
             return '[' + obj.map(item => this.canonicalJSON(item)).join(',') + ']'
         }
-        // Sort object keys alphabetically for deterministic output
+
+        // Handle objects - sort keys alphabetically for deterministic output
         const sortedKeys = Object.keys(obj).sort()
         const pairs = sortedKeys.map(key => {
             return JSON.stringify(key) + ':' + this.canonicalJSON(obj[key])
@@ -140,6 +164,9 @@ export class RondevuAPI {
     /**
      * Generate cryptographically secure nonce
      * Uses crypto.randomUUID() if available, falls back to secure random bytes
+     *
+     * Note: this.crypto is always initialized in constructor (WebCryptoAdapter or NodeCryptoAdapter)
+     * and TypeScript enforces that both implement randomBytes(), so the fallback is always safe.
      */
     private generateNonce(): string {
         // Prefer crypto.randomUUID() for widespread support and standard format
@@ -149,6 +176,7 @@ export class RondevuAPI {
         }
         // Fallback: 16 random bytes (128 bits entropy) as hex string
         // Slightly more entropy than UUID, but both are cryptographically secure
+        // Safe because this.crypto is guaranteed to implement CryptoAdapter interface
         const randomBytes = this.crypto.randomBytes(16)
         return this.crypto.bytesToHex(randomBytes)
     }

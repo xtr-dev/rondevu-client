@@ -168,6 +168,7 @@ export class NodeCryptoAdapter implements CryptoAdapter {
 
             // Buffer.from silently ignores invalid base64 characters
             // Check for empty buffer when input was non-empty (indicates invalid characters)
+            // This catches edge cases like "!!!invalid" or "====" (all padding)
             if (buffer.length === 0 && base64.length > 0) {
                 throw new Error('Invalid base64 string')
             }
