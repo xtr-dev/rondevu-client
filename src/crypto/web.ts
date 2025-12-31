@@ -133,6 +133,12 @@ export class WebCryptoAdapter implements CryptoAdapter {
         // Decode base64 string to binary
         // Note: Generic error messages intentional for security (prevents information leakage)
         // verifySignature() wraps this for additional security in authentication path
+
+        // Validate input first
+        if (!base64 || typeof base64 !== 'string' || base64.length === 0) {
+            throw new Error('Invalid base64 string: must be a non-empty string')
+        }
+
         let binString: string
         try {
             binString = atob(base64)

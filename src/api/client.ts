@@ -175,11 +175,20 @@ export class RondevuAPI {
      * and TypeScript enforces that both implement randomBytes(), so the fallback is always safe.
      */
     private generateNonce(): string {
+        // Get crypto object from global scope (supports various contexts)
+        // In browsers: window.crypto or self.crypto
+        // In modern environments: global crypto
+        const globalCrypto = typeof crypto !== 'undefined' ? crypto :
+                            (typeof window !== 'undefined' && window.crypto) ||
+                            (typeof self !== 'undefined' && self.crypto) ||
+                            undefined
+
         // Prefer crypto.randomUUID() for widespread support and standard format
         // UUIDv4 provides 122 bits of entropy (6 fixed version/variant bits)
-        if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-            return crypto.randomUUID()
+        if (globalCrypto && typeof globalCrypto.randomUUID === 'function') {
+            return globalCrypto.randomUUID()
         }
+
         // Fallback: 16 random bytes (128 bits entropy) as hex string
         // Slightly more entropy than UUID, but both are cryptographically secure
         // Safe because this.crypto is guaranteed to implement CryptoAdapter interface
@@ -282,6 +291,9 @@ export class RondevuAPI {
 
             try {
                 // Create abort controller for timeout
+                if (typeof AbortController === 'undefined') {
+                    throw new Error('AbortController not supported in this environment')
+                }
                 const controller = new AbortController()
                 const timeoutId = setTimeout(() => controller.abort(), timeout)
 
