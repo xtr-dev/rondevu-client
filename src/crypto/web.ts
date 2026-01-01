@@ -134,9 +134,9 @@ export class WebCryptoAdapter implements CryptoAdapter {
         // Note: Generic error messages intentional for security (prevents information leakage)
         // verifySignature() wraps this for additional security in authentication path
 
-        // Validate input first
-        if (!base64 || typeof base64 !== 'string' || base64.length === 0) {
-            throw new Error('Invalid base64 string: must be a non-empty string')
+        // Validate input first (regex requires at least one character)
+        if (!base64 || typeof base64 !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(base64)) {
+            throw new Error('Invalid base64 string')
         }
 
         let binString: string

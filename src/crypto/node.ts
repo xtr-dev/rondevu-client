@@ -157,6 +157,10 @@ export class NodeCryptoAdapter implements CryptoAdapter {
     }
 
     base64ToBytes(base64: string): Uint8Array {
+        // Validate base64 string format (require at least one character)
+        if (!base64 || typeof base64 !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(base64)) {
+            throw new Error('Invalid base64 string')
+        }
         // Node.js Buffer provides native base64 decoding
         // Validate input first
         if (!base64 || typeof base64 !== 'string' || base64.length === 0) {

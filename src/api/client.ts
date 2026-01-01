@@ -124,9 +124,12 @@ export class RondevuAPI {
         // Validate primitive types
         const type = typeof obj
 
-        // Reject functions
+        // Reject unsupported types
         if (type === 'function') {
             throw new Error('Functions are not supported in RPC parameters')
+        }
+        if (type === 'symbol' || type === 'bigint') {
+            throw new Error(`${type} is not supported in RPC parameters`)
         }
 
         // Validate numbers (reject NaN and Infinity)
