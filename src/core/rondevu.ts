@@ -55,7 +55,7 @@ export const ICE_SERVER_PRESETS: Record<IceServerPreset, RTCIceServer[]> = {
 }
 
 export interface RondevuOptions {
-    apiUrl: string
+    apiUrl?: string  // Optional, defaults to 'https://api.ronde.vu'
     credential?: Credential  // Optional, will generate if not provided
     cryptoAdapter?: CryptoAdapter  // Optional, defaults to WebCryptoAdapter
     iceServers?: IceServerPreset | RTCIceServer[]  // Optional: preset name or custom STUN/TURN servers
@@ -235,6 +235,7 @@ export class ConnectionError extends RondevuError {
  */
 export class Rondevu extends EventEmitter {
     // Constants
+    private static readonly DEFAULT_API_URL = 'https://api.ronde.vu'
     private static readonly DEFAULT_TTL_MS = 300000  // 5 minutes
     private static readonly POLLING_INTERVAL_MS = 1000  // 1 second
 
@@ -292,12 +293,16 @@ export class Rondevu extends EventEmitter {
      *
      * @example
      * ```typescript
+     * const rondevu = await Rondevu.connect({})  // Uses default API URL
+     * // or
      * const rondevu = await Rondevu.connect({
-     *   apiUrl: 'https://api.ronde.vu'
+     *   apiUrl: 'https://custom.api.com'
      * })
      * ```
      */
-    static async connect(options: RondevuOptions): Promise<Rondevu> {
+    static async connect(options: RondevuOptions = {}): Promise<Rondevu> {
+        const apiUrl = options.apiUrl || Rondevu.DEFAULT_API_URL
+
         // Apply WebRTC polyfills to global scope if provided (Node.js environments)
         if (options.rtcPeerConnection) {
             globalThis.RTCPeerConnection = options.rtcPeerConnection as any
@@ -318,6 +323,7 @@ export class Rondevu extends EventEmitter {
 
         if (options.debug) {
             console.log('[Rondevu] Connecting:', {
+                apiUrl,
                 hasCredential: !!options.credential,
                 iceServers: iceServers.length
             })
@@ -327,7 +333,7 @@ export class Rondevu extends EventEmitter {
         let credential = options.credential
         if (!credential) {
             if (options.debug) console.log('[Rondevu] Generating new credentials...')
-            credential = await RondevuAPI.generateCredentials(options.apiUrl)
+            credential = await RondevuAPI.generateCredentials(apiUrl)
             if (options.debug) console.log('[Rondevu] Generated credentials, name:', credential.name)
         } else {
             if (options.debug) console.log('[Rondevu] Using existing credential, name:', credential.name)
@@ -335,14 +341,14 @@ export class Rondevu extends EventEmitter {
 
         // Create API instance
         const api = new RondevuAPI(
-            options.apiUrl,
+            apiUrl,
             credential,
             options.cryptoAdapter
         )
         if (options.debug) console.log('[Rondevu] Created API instance')
 
         return new Rondevu(
-            options.apiUrl,
+            apiUrl,
             credential,
             api,
             iceServers,
