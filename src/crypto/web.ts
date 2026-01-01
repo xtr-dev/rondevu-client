@@ -140,12 +140,16 @@ export class WebCryptoAdapter implements CryptoAdapter {
         if (typeof base64 !== 'string' || base64.length === 0) {
             throw new Error('Invalid base64 string')
         }
-        // Base64 length must be divisible by 4 (with padding)
-        if (base64.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(base64)) {
+        // Base64 length must be divisible by 4 (with padding), + requires at least one char
+        if (base64.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(base64)) {
             throw new Error('Invalid base64 string')
         }
-        const binString = atob(base64)
-        return Uint8Array.from(binString, char => char.codePointAt(0)!)
+        try {
+            const binString = atob(base64)
+            return Uint8Array.from(binString, char => char.codePointAt(0)!)
+        } catch {
+            throw new Error('Invalid base64 string')
+        }
     }
 
     randomBytes(length: number): Uint8Array {

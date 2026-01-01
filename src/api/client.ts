@@ -173,6 +173,9 @@ export class RondevuAPI {
      * This matches the server's expectation for parameterless RPC calls.
      */
     private buildSignatureMessage(timestamp: number, nonce: string, method: string, params?: any): string {
+        if (!method || typeof method !== 'string') {
+            throw new Error('Invalid method: must be a non-empty string')
+        }
         const paramsJson = this.canonicalJSON(params || {})
         return `${timestamp}:${nonce}:${method}:${paramsJson}`
     }
@@ -297,6 +300,7 @@ export class RondevuAPI {
         }
 
         for (let attempt = 0; attempt < maxRetries; attempt++) {
+            // httpStatus is scoped to each iteration intentionally - resets on each retry
             let httpStatus: number | null = null
 
             try {
