@@ -91,7 +91,13 @@ export class RondevuAPI {
         if (obj === null || obj === undefined) {
             return JSON.stringify(obj)
         }
-        if (typeof obj !== 'object') {
+
+        const type = typeof obj
+        if (type === 'symbol' || type === 'bigint') {
+            throw new Error(`${type} is not supported in RPC parameters`)
+        }
+
+        if (type !== 'object') {
             return JSON.stringify(obj)
         }
         if (Array.isArray(obj)) {
