@@ -25,14 +25,14 @@ TypeScript/JavaScript client for Rondevu, providing WebRTC signaling with **auto
 - **🏗️ Internal Refactoring**: Cleaner codebase with OfferPool extraction and consolidated ICE polling
 
 ### Core Features
-- **Username Claiming**: Secure ownership with Ed25519 signatures
-- **Anonymous Users**: Auto-generated anonymous usernames for quick testing
+- **Credential-Based Authentication**: Secure authentication with HMAC-SHA256 signatures
+- **Auto-Generated Credentials**: Server-generated credentials with unique names and secrets
 - **Service Publishing**: Publish services with multiple offers for connection pooling
 - **Service Discovery**: Direct lookup, random discovery, or paginated search
-- **Efficient Batch Polling**: Single endpoint for answers and ICE candidates
+- **Efficient Polling**: Single endpoint for answers and ICE candidates
 - **Semantic Version Matching**: Compatible version resolution (chat:1.0.0 matches any 1.x.x)
 - **TypeScript**: Full type safety and autocomplete
-- **Keypair Management**: Generate or reuse Ed25519 keypairs
+- **Credential Management**: Generate or reuse credentials for persistent identities
 
 ## Installation
 
@@ -47,12 +47,13 @@ npm install @xtr-dev/rondevu-client
 ```typescript
 import { Rondevu } from '@xtr-dev/rondevu-client'
 
-// 1. Connect to Rondevu
+// 1. Connect to Rondevu (credential auto-generated if not provided)
 const rondevu = await Rondevu.connect({
   apiUrl: 'https://api.ronde.vu',
-  username: 'alice',  // Or omit for anonymous username
   iceServers: 'ipv4-turn'  // Preset: 'ipv4-turn', 'hostname-turns', 'google-stun', 'relay-only'
 })
+
+console.log('Credential name:', rondevu.getName())
 
 // 2. Publish service with automatic offer management
 await rondevu.publishService({
@@ -94,10 +95,9 @@ rondevu.on('connection:opened', (offerId, connection) => {
 ```typescript
 import { Rondevu } from '@xtr-dev/rondevu-client'
 
-// 1. Connect to Rondevu
+// 1. Connect to Rondevu (credential auto-generated if not provided)
 const rondevu = await Rondevu.connect({
   apiUrl: 'https://api.ronde.vu',
-  username: 'bob',
   iceServers: 'ipv4-turn'
 })
 
@@ -142,8 +142,8 @@ connection.on('failed', (error) => {
 ```typescript
 const rondevu = await Rondevu.connect({
   apiUrl: string,          // Required: Signaling server URL
-  username?: string,       // Optional: your username (auto-generates anonymous if omitted)
-  keypair?: Keypair,       // Optional: reuse existing keypair
+  credential?: Credential, // Optional: reuse existing credential (auto-generates if omitted)
+  cryptoAdapter?: CryptoAdapter,  // Optional: custom crypto implementation
   iceServers?: IceServerPreset | RTCIceServer[],  // Optional: preset or custom config
   debug?: boolean          // Optional: enable debug logging (default: false)
 })

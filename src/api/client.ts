@@ -2,12 +2,10 @@
  * Rondevu API Client - RPC interface
  */
 
-import { CryptoAdapter, Keypair } from '../crypto/adapter.js'
+import { CryptoAdapter, Credential } from '../crypto/adapter.js'
 import { WebCryptoAdapter } from '../crypto/web.js'
-import { RpcBatcher, BatcherOptions } from './batcher.js'
 
-export type { Keypair } from '../crypto/adapter.js'
-export type { BatcherOptions } from './batcher.js'
+export type { Credential } from '../crypto/adapter.js'
 
 export interface OfferRequest {
     sdp: string
@@ -62,101 +60,190 @@ interface RpcResponse {
  * RondevuAPI - RPC-based API client for Rondevu signaling server
  */
 export class RondevuAPI {
+    // Default values for credential generation
+    private static readonly DEFAULT_MAX_RETRIES = 3
+    private static readonly DEFAULT_TIMEOUT_MS = 30000 // 30 seconds
+    private static readonly DEFAULT_CREDENTIAL_NAME_MAX_LENGTH = 128
+    private static readonly DEFAULT_SECRET_MIN_LENGTH = 64 // 256 bits
+    private static readonly MAX_BACKOFF_MS = 60000 // 60 seconds max backoff
+    private static readonly MAX_CANONICALIZE_DEPTH = 100 // Prevent stack overflow
+
     private crypto: CryptoAdapter
-    private batcher: RpcBatcher | null = null
 
     constructor(
         private baseUrl: string,
-        private username: string,
-        private keypair: Keypair,
-        cryptoAdapter?: CryptoAdapter,
-        batcherOptions?: BatcherOptions | false
+        private credential: Credential,
+        cryptoAdapter?: CryptoAdapter
     ) {
         // Use WebCryptoAdapter by default (browser environment)
         this.crypto = cryptoAdapter || new WebCryptoAdapter()
 
-        // Create batcher if not explicitly disabled
-        if (batcherOptions !== false) {
-            this.batcher = new RpcBatcher(
-                (requests) => this.rpcBatchDirect(requests),
-                batcherOptions
-            )
+        // Validate credential format early to provide clear error messages
+        if (!credential.name || typeof credential.name !== 'string') {
+            throw new Error('Invalid credential: name must be a non-empty string')
+        }
+        // Validate name format (alphanumeric, dots, underscores, hyphens only)
+        // Limit to prevent HTTP header size issues
+        if (credential.name.length > RondevuAPI.DEFAULT_CREDENTIAL_NAME_MAX_LENGTH) {
+            throw new Error(`Invalid credential: name must not exceed ${RondevuAPI.DEFAULT_CREDENTIAL_NAME_MAX_LENGTH} characters`)
+        }
+        if (!/^[a-zA-Z0-9._-]+$/.test(credential.name)) {
+            throw new Error('Invalid credential: name must contain only alphanumeric characters, dots, underscores, and hyphens')
+        }
+
+        // Validate secret
+        if (!credential.secret || typeof credential.secret !== 'string') {
+            throw new Error('Invalid credential: secret must be a non-empty string')
+        }
+        // Minimum 256 bits (64 hex characters) for security
+        if (credential.secret.length < RondevuAPI.DEFAULT_SECRET_MIN_LENGTH) {
+            throw new Error(`Invalid credential: secret must be at least 256 bits (${RondevuAPI.DEFAULT_SECRET_MIN_LENGTH} hex characters)`)
+        }
+        // Validate secret is valid hex (even length, only hex characters)
+        if (credential.secret.length % 2 !== 0) {
+            throw new Error('Invalid credential: secret must be a valid hex string (even length)')
+        }
+        if (!/^[0-9a-fA-F]+$/.test(credential.secret)) {
+            throw new Error('Invalid credential: secret must contain only hexadecimal characters')
         }
     }
 
     /**
-     * Create canonical JSON string with sorted keys for deterministic signing
+     * Canonical JSON serialization with sorted keys
+     * Ensures deterministic output regardless of property insertion order
      */
-    private canonicalJSON(obj: any): string {
-        if (obj === null || obj === undefined) {
-            return JSON.stringify(obj)
+    private canonicalJSON(obj: any, depth: number = 0): string {
+        // Prevent stack overflow from deeply nested objects
+        if (depth > RondevuAPI.MAX_CANONICALIZE_DEPTH) {
+            throw new Error('Object nesting too deep for canonicalization')
         }
 
+        // Handle null
+        if (obj === null) {
+            return 'null'
+        }
+
+        // Handle undefined
+        if (obj === undefined) {
+            return JSON.stringify(undefined)
+        }
+
+        // Validate primitive types
         const type = typeof obj
+
+        // Reject unsupported types
+        if (type === 'function') {
+            throw new Error('Functions are not supported in RPC parameters')
+        }
         if (type === 'symbol' || type === 'bigint') {
             throw new Error(`${type} is not supported in RPC parameters`)
         }
 
+        // Validate numbers (reject NaN and Infinity)
+        if (type === 'number' && !Number.isFinite(obj)) {
+            throw new Error('NaN and Infinity are not supported in RPC parameters')
+        }
+
+        // Handle primitives (string, number, boolean)
         if (type !== 'object') {
             return JSON.stringify(obj)
         }
+
+        // Handle arrays recursively
         if (Array.isArray(obj)) {
-            return '[' + obj.map(item => this.canonicalJSON(item)).join(',') + ']'
+            return '[' + obj.map(item => this.canonicalJSON(item, depth + 1)).join(',') + ']'
         }
 
+        // Handle objects - sort keys alphabetically for deterministic output
         const sortedKeys = Object.keys(obj).sort()
         const pairs = sortedKeys.map(key => {
-            return JSON.stringify(key) + ':' + this.canonicalJSON(obj[key])
+            return JSON.stringify(key) + ':' + this.canonicalJSON(obj[key], depth + 1)
         })
         return '{' + pairs.join(',') + '}'
     }
 
     /**
-     * Generate authentication headers for RPC request
-     * Signs the payload (method + params + timestamp + username)
+     * Build signature message following server format
+     * Format: timestamp:nonce:method:canonicalJSON(params || {})
+     *
+     * Uses canonical JSON (sorted keys) to ensure deterministic serialization
+     * across different JavaScript engines and platforms.
+     *
+     * Note: When params is undefined, it's serialized as "{}" (empty object).
+     * This matches the server's expectation for parameterless RPC calls.
      */
-    private async generateAuthHeaders(request: RpcRequest, includePublicKey: boolean = false): Promise<Record<string, string>> {
-        const timestamp = Date.now()
-
-        // Create payload with timestamp and username for signing: { method, params, timestamp, username }
-        const payload = { ...request, timestamp, username: this.username }
-
-        // Create canonical JSON representation for signing
-        const canonical = this.canonicalJSON(payload)
-
-        // Sign the canonical representation
-        const signature = await this.crypto.signMessage(canonical, this.keypair.privateKey)
-
-        const headers: Record<string, string> = {
-            'X-Signature': signature,
-            'X-Timestamp': timestamp.toString(),
-            'X-Username': this.username,
+    private buildSignatureMessage(timestamp: number, nonce: string, method: string, params?: any): string {
+        if (!method || typeof method !== 'string') {
+            throw new Error('Invalid method: must be a non-empty string')
         }
-
-        if (includePublicKey) {
-            headers['X-Public-Key'] = this.keypair.publicKey
-        }
-
-        return headers
+        const paramsJson = this.canonicalJSON(params || {})
+        return `${timestamp}:${nonce}:${method}:${paramsJson}`
     }
 
     /**
-     * Execute RPC call with optional batching
+     * Generate cryptographically secure nonce
+     * Uses crypto.randomUUID() if available, falls back to secure random bytes
+     *
+     * Note: this.crypto is always initialized in constructor (WebCryptoAdapter or NodeCryptoAdapter)
+     * and TypeScript enforces that both implement randomBytes(), so the fallback is always safe.
+     */
+    private generateNonce(): string {
+        // Get crypto object from global scope (supports various contexts)
+        // In browsers: window.crypto or self.crypto
+        // In modern environments: global crypto
+        const globalCrypto = typeof crypto !== 'undefined' ? crypto :
+                            (typeof window !== 'undefined' && window.crypto) ||
+                            (typeof self !== 'undefined' && self.crypto) ||
+                            undefined
+
+        // Prefer crypto.randomUUID() for widespread support and standard format
+        // UUIDv4 provides 122 bits of entropy (6 fixed version/variant bits)
+        if (globalCrypto && typeof globalCrypto.randomUUID === 'function') {
+            return globalCrypto.randomUUID()
+        }
+
+        // Fallback: 16 random bytes (128 bits entropy) as hex string
+        // Slightly more entropy than UUID, but both are cryptographically secure
+        // Safe because this.crypto is guaranteed to implement CryptoAdapter interface
+        const randomBytes = this.crypto.randomBytes(16)
+        return this.crypto.bytesToHex(randomBytes)
+    }
+
+    /**
+     * Generate authentication headers for RPC request
+     * Uses HMAC-SHA256 signature with nonce for replay protection
+     *
+     * Security notes:
+     * - Nonce: Cryptographically secure random value (UUID or 128-bit hex)
+     * - Timestamp: Prevents replay attacks outside the server's time window
+     *   - Server validates timestamp is within acceptable range (typically ±5 minutes)
+     *   - Tolerates reasonable clock skew between client and server
+     *   - Requests with stale timestamps are rejected
+     * - Signature: HMAC-SHA256 ensures message integrity and authenticity
+     * - Server validates nonce uniqueness to prevent replay within time window
+     *   - Each nonce can only be used once within the timestamp validity window
+     *   - Server maintains nonce cache with expiration matching timestamp window
+     */
+    private async generateAuthHeaders(request: RpcRequest): Promise<Record<string, string>> {
+        const timestamp = Date.now()
+        const nonce = this.generateNonce()
+
+        // Build message and generate signature
+        const message = this.buildSignatureMessage(timestamp, nonce, request.method, request.params)
+        const signature = await this.crypto.generateSignature(this.credential.secret, message)
+
+        return {
+            'X-Name': this.credential.name,
+            'X-Timestamp': timestamp.toString(),
+            'X-Nonce': nonce,
+            'X-Signature': signature,
+        }
+    }
+
+    /**
+     * Execute RPC call
      */
     private async rpc(request: RpcRequest, authHeaders: Record<string, string>): Promise<any> {
-        // Use batcher if enabled
-        if (this.batcher) {
-            return await this.batcher.add(request)
-        }
-
-        // Direct call without batching
-        return await this.rpcDirect(request, authHeaders)
-    }
-
-    /**
-     * Execute single RPC call directly (bypasses batcher)
-     */
-    private async rpcDirect(request: RpcRequest, authHeaders: Record<string, string>): Promise<any> {
         const response = await fetch(`${this.baseUrl}/rpc`, {
             method: 'POST',
             headers: {
@@ -179,85 +266,126 @@ export class RondevuAPI {
         return result.result
     }
 
-    /**
-     * Execute batch RPC calls directly (bypasses batcher)
-     * Note: Batching with auth headers is complex - each request needs its own signature
-     * For now, this will use the same auth headers for all requests in the batch
-     */
-    private async rpcBatchDirect(requests: RpcRequest[]): Promise<any[]> {
-        // For batch requests, we'll need to handle auth differently
-        // This is a limitation of moving to header-based auth
-        throw new Error('Batch RPC calls not yet supported with header-based authentication')
-    }
-
     // ============================================
-    // Ed25519 Cryptography Helpers
+    // Credential Management
     // ============================================
 
     /**
-     * Generate an Ed25519 keypair for username claiming and service publishing
-     * @param cryptoAdapter - Optional crypto adapter (defaults to WebCryptoAdapter)
+     * Generate new credentials (name + secret pair)
+     * This is the entry point for new users - no authentication required
+     * Credentials are generated server-side to ensure security and uniqueness
+     *
+     * ⚠️ SECURITY NOTE:
+     * - Store the returned credential securely
+     * - The secret provides full access to this identity
+     * - Credentials should be persisted encrypted and never logged
+     *
+     * @param baseUrl - Rondevu server URL
+     * @param expiresAt - Optional custom expiry timestamp (defaults to 1 year)
+     * @param options - Optional: { maxRetries: number, timeout: number }
+     * @returns Generated credential with name and secret
      */
-    static async generateKeypair(cryptoAdapter?: CryptoAdapter): Promise<Keypair> {
-        const adapter = cryptoAdapter || new WebCryptoAdapter()
-        return await adapter.generateKeypair()
-    }
+    static async generateCredentials(
+        baseUrl: string,
+        expiresAt?: number,
+        options?: { maxRetries?: number; timeout?: number }
+    ): Promise<Credential> {
+        const maxRetries = options?.maxRetries ?? RondevuAPI.DEFAULT_MAX_RETRIES
+        const timeout = options?.timeout ?? RondevuAPI.DEFAULT_TIMEOUT_MS
+        let lastError: Error | null = null
 
-    /**
-     * Sign a message with an Ed25519 private key
-     * @param cryptoAdapter - Optional crypto adapter (defaults to WebCryptoAdapter)
-     */
-    static async signMessage(
-        message: string,
-        privateKeyBase64: string,
-        cryptoAdapter?: CryptoAdapter
-    ): Promise<string> {
-        const adapter = cryptoAdapter || new WebCryptoAdapter()
-        return await adapter.signMessage(message, privateKeyBase64)
-    }
-
-    /**
-     * Verify an Ed25519 signature
-     * @param cryptoAdapter - Optional crypto adapter (defaults to WebCryptoAdapter)
-     */
-    static async verifySignature(
-        message: string,
-        signatureBase64: string,
-        publicKeyBase64: string,
-        cryptoAdapter?: CryptoAdapter
-    ): Promise<boolean> {
-        const adapter = cryptoAdapter || new WebCryptoAdapter()
-        return await adapter.verifySignature(message, signatureBase64, publicKeyBase64)
-    }
-
-    // ============================================
-    // Username Management
-    // ============================================
-
-    /**
-     * Check if a username is available
-     */
-    async isUsernameAvailable(username: string): Promise<boolean> {
         const request: RpcRequest = {
-            method: 'getUser',
-            params: { username },
+            method: 'generateCredentials',
+            params: expiresAt ? { expiresAt } : undefined,
         }
-        const authHeaders = await this.generateAuthHeaders(request, false)
-        const result = await this.rpc(request, authHeaders)
-        return result.available
+
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
+            // httpStatus is scoped to each iteration intentionally - resets on each retry
+            let httpStatus: number | null = null
+
+            try {
+                // Create abort controller for timeout
+                if (typeof AbortController === 'undefined') {
+                    throw new Error('AbortController not supported in this environment')
+                }
+                const controller = new AbortController()
+                const timeoutId = setTimeout(() => controller.abort(), timeout)
+
+                try {
+                    const response = await fetch(`${baseUrl}/rpc`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(request),
+                        signal: controller.signal
+                    })
+
+                    httpStatus = response.status
+
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+                    }
+
+                    const result: RpcResponse = await response.json()
+
+                    if (!result.success) {
+                        throw new Error(result.error || 'Failed to generate credentials')
+                    }
+
+                    // Validate credential structure
+                    const credential = result.result
+                    if (!credential || typeof credential !== 'object') {
+                        throw new Error('Invalid credential response: result is not an object')
+                    }
+                    if (typeof credential.name !== 'string' || !credential.name) {
+                        throw new Error('Invalid credential response: missing or invalid name')
+                    }
+                    if (typeof credential.secret !== 'string' || !credential.secret) {
+                        throw new Error('Invalid credential response: missing or invalid secret')
+                    }
+
+                    return credential as Credential
+                } finally {
+                    // Always clear timeout to prevent memory leaks
+                    clearTimeout(timeoutId)
+                }
+            } catch (error) {
+                lastError = error as Error
+
+                // Don't retry on abort (timeout)
+                if (error instanceof Error && error.name === 'AbortError') {
+                    throw new Error(`Credential generation timed out after ${timeout}ms`)
+                }
+
+                // Don't retry on 4xx errors (client errors) - check actual status
+                if (httpStatus !== null && httpStatus >= 400 && httpStatus < 500) {
+                    throw error
+                }
+
+                // Retry with exponential backoff + jitter for network/server errors (5xx or network failures)
+                // Jitter prevents thundering herd when many clients retry simultaneously
+                // Cap backoff to prevent excessive waits
+                if (attempt < maxRetries - 1) {
+                    const backoffMs = Math.min(
+                        1000 * Math.pow(2, attempt) + Math.random() * 1000,
+                        RondevuAPI.MAX_BACKOFF_MS
+                    )
+                    await new Promise(resolve => setTimeout(resolve, backoffMs))
+                }
+            }
+        }
+
+        throw new Error(`Failed to generate credentials after ${maxRetries} attempts: ${lastError?.message || 'Unknown error'}`)
     }
 
     /**
-     * Check if current username is claimed
+     * Generate a random secret locally (for advanced use cases)
+     * @param cryptoAdapter - Optional crypto adapter
      */
-    async isUsernameClaimed(): Promise<boolean> {
-        const request: RpcRequest = {
-            method: 'getUser',
-            params: { username: this.username },
-        }
-        const authHeaders = await this.generateAuthHeaders(request, false)
-        const result = await this.rpc(request, authHeaders)
-        return !result.available
+    static generateSecret(cryptoAdapter?: CryptoAdapter): string {
+        const adapter = cryptoAdapter || new WebCryptoAdapter()
+        return adapter.generateSecret()
     }
 
     // ============================================
@@ -269,14 +397,14 @@ export class RondevuAPI {
      */
     async publishService(service: ServiceRequest): Promise<Service> {
         const request: RpcRequest = {
-            method: 'publishService',
+            method: 'publishOffer',
             params: {
                 serviceFqn: service.serviceFqn,
                 offers: service.offers,
                 ttl: service.ttl,
             },
         }
-        const authHeaders = await this.generateAuthHeaders(request, true)
+        const authHeaders = await this.generateAuthHeaders(request)
         return await this.rpc(request, authHeaders)
     }
 
@@ -288,13 +416,13 @@ export class RondevuAPI {
         options?: { limit?: number; offset?: number }
     ): Promise<any> {
         const request: RpcRequest = {
-            method: 'getService',
+            method: 'getOffer',
             params: {
                 serviceFqn,
                 ...options,
             },
         }
-        const authHeaders = await this.generateAuthHeaders(request, true)
+        const authHeaders = await this.generateAuthHeaders(request)
         return await this.rpc(request, authHeaders)
     }
 
@@ -303,10 +431,10 @@ export class RondevuAPI {
      */
     async deleteService(serviceFqn: string): Promise<void> {
         const request: RpcRequest = {
-            method: 'deleteService',
+            method: 'deleteOffer',
             params: { serviceFqn },
         }
-        const authHeaders = await this.generateAuthHeaders(request, true)
+        const authHeaders = await this.generateAuthHeaders(request)
         await this.rpc(request, authHeaders)
     }
 
@@ -322,7 +450,7 @@ export class RondevuAPI {
             method: 'answerOffer',
             params: { serviceFqn, offerId, sdp },
         }
-        const authHeaders = await this.generateAuthHeaders(request, true)
+        const authHeaders = await this.generateAuthHeaders(request)
         await this.rpc(request, authHeaders)
     }
 
@@ -338,7 +466,7 @@ export class RondevuAPI {
                 method: 'getOfferAnswer',
                 params: { serviceFqn, offerId },
             }
-            const authHeaders = await this.generateAuthHeaders(request, true)
+            const authHeaders = await this.generateAuthHeaders(request)
             return await this.rpc(request, authHeaders)
         } catch (err) {
             if ((err as Error).message.includes('not yet answered')) {
@@ -373,7 +501,7 @@ export class RondevuAPI {
             method: 'poll',
             params: { since },
         }
-        const authHeaders = await this.generateAuthHeaders(request, true)
+        const authHeaders = await this.generateAuthHeaders(request)
         return await this.rpc(request, authHeaders)
     }
 
@@ -389,7 +517,7 @@ export class RondevuAPI {
             method: 'addIceCandidates',
             params: { serviceFqn, offerId, candidates },
         }
-        const authHeaders = await this.generateAuthHeaders(request, true)
+        const authHeaders = await this.generateAuthHeaders(request)
         return await this.rpc(request, authHeaders)
     }
 
@@ -405,7 +533,7 @@ export class RondevuAPI {
             method: 'getIceCandidates',
             params: { serviceFqn, offerId, since },
         }
-        const authHeaders = await this.generateAuthHeaders(request, true)
+        const authHeaders = await this.generateAuthHeaders(request)
         const result = await this.rpc(request, authHeaders)
 
         return {

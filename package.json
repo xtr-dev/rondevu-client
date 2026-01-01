@@ -1,6 +1,6 @@
 {
   "name": "@xtr-dev/rondevu-client",
-  "version": "0.20.0",
+  "version": "0.20.1",
   "description": "TypeScript client for Rondevu with durable WebRTC connections, automatic reconnection, and message queuing",
   "type": "module",
   "main": "dist/core/index.js",
@@ -41,7 +41,6 @@
     "README.md"
   ],
   "dependencies": {
-    "@noble/ed25519": "^3.0.0",
     "eventemitter3": "^5.0.1"
   }
 }

@@ -2,9 +2,9 @@
  * Crypto adapter interface for platform-independent cryptographic operations
  */
 
-export interface Keypair {
-    publicKey: string
-    privateKey: string
+export interface Credential {
+    name: string
+    secret: string
 }
 
 /**
@@ -13,23 +13,37 @@ export interface Keypair {
  */
 export interface CryptoAdapter {
     /**
-     * Generate an Ed25519 keypair
+     * Generate HMAC-SHA256 signature for message authentication
+     * @param secret - The credential secret (hex string)
+     * @param message - The message to sign
+     * @returns Base64-encoded signature
      */
-    generateKeypair(): Promise<Keypair>
+    generateSignature(secret: string, message: string): Promise<string>
 
     /**
-     * Sign a message with an Ed25519 private key
+     * Verify HMAC-SHA256 signature
+     * @param secret - The credential secret (hex string)
+     * @param message - The message that was signed
+     * @param signature - The signature to verify (base64)
+     * @returns True if signature is valid
      */
-    signMessage(message: string, privateKeyBase64: string): Promise<string>
+    verifySignature(secret: string, message: string, signature: string): Promise<boolean>
 
     /**
-     * Verify an Ed25519 signature
+     * Generate a random secret (256-bit hex string)
+     * @returns 64-character hex string
      */
-    verifySignature(
-        message: string,
-        signatureBase64: string,
-        publicKeyBase64: string
-    ): Promise<boolean>
+    generateSecret(): string
+
+    /**
+     * Convert hex string to bytes
+     */
+    hexToBytes(hex: string): Uint8Array
+
+    /**
+     * Convert bytes to hex string
+     */
+    bytesToHex(bytes: Uint8Array): string
 
     /**
      * Convert Uint8Array to base64 string
