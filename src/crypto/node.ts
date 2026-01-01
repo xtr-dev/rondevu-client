@@ -40,6 +40,12 @@ export class NodeCryptoAdapter implements CryptoAdapter {
      * Generate HMAC-SHA256 signature
      */
     async generateSignature(secret: string, message: string): Promise<string> {
+        if (!secret || typeof secret !== 'string') {
+            throw new Error('Invalid secret: must be a non-empty string')
+        }
+        if (typeof message !== 'string') {
+            throw new Error('Invalid message: must be a string')
+        }
         const secretBytes = this.hexToBytes(secret)
 
         // Import secret as HMAC key
@@ -109,7 +115,7 @@ export class NodeCryptoAdapter implements CryptoAdapter {
             return await crypto.subtle.verify('HMAC', key, signatureBytes as BufferSource, messageBytes)
         } catch (error) {
             // System/crypto errors - unexpected failures
-            throw new Error(`HMAC verification failed: ${error instanceof Error ? error.message : String(error)}`)
+            throw new Error(`Signature verification error: ${error instanceof Error ? error.message : String(error)}`)
         }
     }
 
@@ -157,8 +163,12 @@ export class NodeCryptoAdapter implements CryptoAdapter {
     }
 
     base64ToBytes(base64: string): Uint8Array {
-        // Validate base64 string format (require at least one character with + quantifier)
-        if (typeof base64 !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(base64)) {
+        // Validate base64 string format
+        if (typeof base64 !== 'string' || base64.length === 0) {
+            throw new Error('Invalid base64 string')
+        }
+        // Base64 length must be divisible by 4 (with padding)
+        if (base64.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(base64)) {
             throw new Error('Invalid base64 string')
         }
         // Node.js Buffer provides native base64 decoding

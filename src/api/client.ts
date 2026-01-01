@@ -65,6 +65,8 @@ export class RondevuAPI {
     private static readonly DEFAULT_TIMEOUT_MS = 30000 // 30 seconds
     private static readonly DEFAULT_CREDENTIAL_NAME_MAX_LENGTH = 128
     private static readonly DEFAULT_SECRET_MIN_LENGTH = 64 // 256 bits
+    private static readonly MAX_BACKOFF_MS = 60000 // 60 seconds max backoff
+    private static readonly MAX_CANONICALIZE_DEPTH = 100 // Prevent stack overflow
 
     private crypto: CryptoAdapter
 
@@ -110,7 +112,12 @@ export class RondevuAPI {
      * Canonical JSON serialization with sorted keys
      * Ensures deterministic output regardless of property insertion order
      */
-    private canonicalJSON(obj: any): string {
+    private canonicalJSON(obj: any, depth: number = 0): string {
+        // Prevent stack overflow from deeply nested objects
+        if (depth > RondevuAPI.MAX_CANONICALIZE_DEPTH) {
+            throw new Error('Object nesting too deep for canonicalization')
+        }
+
         // Handle null
         if (obj === null) {
             return 'null'
@@ -144,13 +151,13 @@ export class RondevuAPI {
 
         // Handle arrays recursively
         if (Array.isArray(obj)) {
-            return '[' + obj.map(item => this.canonicalJSON(item)).join(',') + ']'
+            return '[' + obj.map(item => this.canonicalJSON(item, depth + 1)).join(',') + ']'
         }
 
         // Handle objects - sort keys alphabetically for deterministic output
         const sortedKeys = Object.keys(obj).sort()
         const pairs = sortedKeys.map(key => {
-            return JSON.stringify(key) + ':' + this.canonicalJSON(obj[key])
+            return JSON.stringify(key) + ':' + this.canonicalJSON(obj[key], depth + 1)
         })
         return '{' + pairs.join(',') + '}'
     }
@@ -354,8 +361,12 @@ export class RondevuAPI {
 
                 // Retry with exponential backoff + jitter for network/server errors (5xx or network failures)
                 // Jitter prevents thundering herd when many clients retry simultaneously
+                // Cap backoff to prevent excessive waits
                 if (attempt < maxRetries - 1) {
-                    const backoffMs = 1000 * Math.pow(2, attempt) + Math.random() * 1000
+                    const backoffMs = Math.min(
+                        1000 * Math.pow(2, attempt) + Math.random() * 1000,
+                        RondevuAPI.MAX_BACKOFF_MS
+                    )
                     await new Promise(resolve => setTimeout(resolve, backoffMs))
                 }
             }
