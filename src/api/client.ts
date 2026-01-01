@@ -4,8 +4,10 @@
 
 import { CryptoAdapter, Credential } from '../crypto/adapter.js'
 import { WebCryptoAdapter } from '../crypto/web.js'
+import { RpcBatcher, BatcherOptions } from './batcher.js'
 
 export type { Credential } from '../crypto/adapter.js'
+export type { BatcherOptions } from './batcher.js'
 
 export interface OfferRequest {
     sdp: string
@@ -69,14 +71,18 @@ export class RondevuAPI {
     private static readonly MAX_CANONICALIZE_DEPTH = 100 // Prevent stack overflow
 
     private crypto: CryptoAdapter
+    private batcher: RpcBatcher
 
     constructor(
         private baseUrl: string,
         private credential: Credential,
-        cryptoAdapter?: CryptoAdapter
+        cryptoAdapter?: CryptoAdapter,
+        batcherOptions?: BatcherOptions
     ) {
         // Use WebCryptoAdapter by default (browser environment)
         this.crypto = cryptoAdapter || new WebCryptoAdapter()
+        // Create batcher for request batching with throttling
+        this.batcher = new RpcBatcher(baseUrl, batcherOptions)
 
         // Validate credential format early to provide clear error messages
         if (!credential.name || typeof credential.name !== 'string') {
@@ -241,29 +247,11 @@ export class RondevuAPI {
     }
 
     /**
-     * Execute RPC call
+     * Execute RPC call via batcher
+     * Requests are batched with throttling for efficiency
      */
     private async rpc(request: RpcRequest, authHeaders: Record<string, string>): Promise<any> {
-        const response = await fetch(`${this.baseUrl}/rpc`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                ...authHeaders,
-            },
-            body: JSON.stringify(request),
-        })
-
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-        }
-
-        const result: RpcResponse = await response.json()
-
-        if (!result.success) {
-            throw new Error(result.error || 'RPC call failed')
-        }
-
-        return result.result
+        return this.batcher.add(request, authHeaders)
     }
 
     // ============================================
@@ -317,7 +305,7 @@ export class RondevuAPI {
                         headers: {
                             'Content-Type': 'application/json',
                         },
-                        body: JSON.stringify(request),
+                        body: JSON.stringify([request]), // Server expects array (batch format)
                         signal: controller.signal
                     })
 
@@ -327,10 +315,12 @@ export class RondevuAPI {
                         throw new Error(`HTTP ${response.status}: ${response.statusText}`)
                     }
 
-                    const result: RpcResponse = await response.json()
+                    // Server returns array of responses
+                    const results: RpcResponse[] = await response.json()
+                    const result = results[0]
 
-                    if (!result.success) {
-                        throw new Error(result.error || 'Failed to generate credentials')
+                    if (!result || !result.success) {
+                        throw new Error(result?.error || 'Failed to generate credentials')
                     }
 
                     // Validate credential structure

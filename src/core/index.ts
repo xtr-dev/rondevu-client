@@ -32,6 +32,7 @@ export type {
     Service,
     ServiceOffer,
     IceCandidate,
+    BatcherOptions,
 } from '../api/client.js'
 
 export type {
