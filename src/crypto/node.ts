@@ -157,38 +157,12 @@ export class NodeCryptoAdapter implements CryptoAdapter {
     }
 
     base64ToBytes(base64: string): Uint8Array {
-        // Validate base64 string format (require at least one character)
-        if (!base64 || typeof base64 !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(base64)) {
+        // Validate base64 string format (require at least one character with + quantifier)
+        if (typeof base64 !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(base64)) {
             throw new Error('Invalid base64 string')
         }
         // Node.js Buffer provides native base64 decoding
-        // Validate input first
-        if (!base64 || typeof base64 !== 'string' || base64.length === 0) {
-            throw new Error('Invalid base64 string: must be a non-empty string')
-        }
-
-        // Validate base64 format with regex (more robust than round-trip verification)
-        // Valid base64: alphanumeric + '+' + '/' with 0-2 '=' padding at end
-        if (!/^[A-Za-z0-9+/]*={0,2}$/.test(base64)) {
-            throw new Error('Invalid base64 string')
-        }
-
-        try {
-            const buffer = Buffer.from(base64, 'base64')
-
-            // Additional validation: check for empty buffer from invalid input
-            // Buffer.from may still produce empty buffer in edge cases
-            if (buffer.length === 0 && base64.length > 0) {
-                throw new Error('Invalid base64 string')
-            }
-
-            return new Uint8Array(buffer)
-        } catch (error) {
-            if (error instanceof Error && error.message.includes('Invalid base64')) {
-                throw error
-            }
-            throw new Error('Invalid base64 string')
-        }
+        return new Uint8Array(Buffer.from(base64, 'base64'))
     }
 
     randomBytes(length: number): Uint8Array {

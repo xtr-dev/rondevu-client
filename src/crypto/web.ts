@@ -130,30 +130,12 @@ export class WebCryptoAdapter implements CryptoAdapter {
     }
 
     base64ToBytes(base64: string): Uint8Array {
-        // Decode base64 string to binary
-        // Note: Generic error messages intentional for security (prevents information leakage)
-        // verifySignature() wraps this for additional security in authentication path
-
-        // Validate input first (regex requires at least one character)
-        if (!base64 || typeof base64 !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(base64)) {
+        // Validate base64 string format (regex with + requires at least one character)
+        if (typeof base64 !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(base64)) {
             throw new Error('Invalid base64 string')
         }
-
-        let binString: string
-        try {
-            binString = atob(base64)
-        } catch (error) {
-            // Generic error - specific atob() error details intentionally not exposed
-            throw new Error('Invalid base64 string')
-        }
-
-        return Uint8Array.from(binString, char => {
-            const code = char.codePointAt(0)
-            if (code === undefined) {
-                throw new Error('Invalid character in base64 decoded string')
-            }
-            return code
-        })
+        const binString = atob(base64)
+        return Uint8Array.from(binString, char => char.codePointAt(0)!)
     }
 
     randomBytes(length: number): Uint8Array {
