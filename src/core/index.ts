@@ -6,9 +6,9 @@
  *   const rondevu = await Rondevu.connect()
  *
  *   // Host: publish offers (auto-starts)
- *   const handle = await rondevu.offer({ tags: ['chat'], maxOffers: 5 })
+ *   const offer = await rondevu.offer({ tags: ['chat'], maxOffers: 5 })
  *   rondevu.on('connection:opened', (id, conn) => { ... })
- *   // Later: handle.cancel()
+ *   // Later: offer.cancel()
  *
  *   // Guest: connect to a peer
  *   const peer = await rondevu.peer({ tags: ['chat'] })

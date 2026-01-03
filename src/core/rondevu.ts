@@ -277,16 +277,16 @@ export class Rondevu extends EventEmitter {
 
     /**
      * Create offers with tags for discovery (offerer/host side)
-     * Auto-starts filling by default. Use the returned handle to cancel.
+     * Auto-starts filling by default. Use the returned object to cancel.
      *
      * @example
      * ```typescript
      * // Auto-start (default)
-     * const handle = await rondevu.offer({
+     * const offer = await rondevu.offer({
      *   tags: ['chat', 'video'],
      *   maxOffers: 5
      * })
-     * // Later: handle.cancel() to stop
+     * // Later: offer.cancel() to stop
      *
      * // Manual start
      * await rondevu.offer({ tags: ['chat'], maxOffers: 5, autoStart: false })

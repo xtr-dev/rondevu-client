@@ -35,8 +35,8 @@ alice.on('connection:opened', (offerId, connection) => {
   connection.send('Hello!')
 })
 
-const handle = await alice.offer({ tags: ['chat'], maxOffers: 5 })
-// Later: handle.cancel() to stop accepting connections
+const offer = await alice.offer({ tags: ['chat'], maxOffers: 5 })
+// Later: offer.cancel() to stop accepting connections
 
 // ============================================
 // BOB: Connect to Alice
@@ -97,14 +97,14 @@ peer.close()
 ### rondevu.offer()
 
 ```typescript
-const handle = await rondevu.offer({
+const offer = await rondevu.offer({
   tags: string[],
   maxOffers: number,
   ttl?: number,       // Offer lifetime in ms (default: 300000)
   autoStart?: boolean // Auto-start filling (default: true)
 })
 
-handle.cancel()  // Stop accepting connections
+offer.cancel()  // Stop accepting connections
 
 rondevu.on('connection:opened', (offerId, connection) => {
   connection.on('message', (data) => {})
