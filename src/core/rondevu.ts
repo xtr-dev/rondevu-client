@@ -18,7 +18,6 @@ import type {
     OfferFactory,
     OfferOptions,
     ConnectionContext,
-    ConnectOptions,
     DiscoverOptions,
     DiscoveredOffer,
     DiscoverResult,
@@ -31,7 +30,6 @@ export type {
     OfferFactory,
     OfferOptions,
     ConnectionContext,
-    ConnectOptions,
     DiscoverOptions,
     DiscoveredOffer,
     DiscoverResult,
@@ -427,106 +425,6 @@ export class Rondevu extends EventEmitter {
             offerCount: this.offerPool?.getOfferCount() ?? 0,
             tags: this.currentTags,
         }
-    }
-
-    /**
-     * Connect to an offer by discovering with tags (answerer side)
-     * Returns an AnswererConnection with automatic reconnection and buffering
-     *
-     * @deprecated Use `peer()` instead for a simpler API:
-     * ```typescript
-     * const peer = await rondevu.peer({ tags: ['chat'] })
-     * peer.on('open', () => peer.send('Hello!'))
-     * peer.on('message', (data) => console.log('Received:', data))
-     * ```
-     *
-     * @internal For advanced use cases requiring direct AnswererConnection access
-     */
-    async connect(options: ConnectOptions): Promise<AnswererConnection> {
-        const { tags, username, rtcConfig, connectionConfig } = options
-
-        // Validate inputs
-        if (!tags || tags.length === 0) {
-            throw new Error('At least one tag must be provided')
-        }
-        if (username !== undefined && typeof username === 'string' && !username.trim()) {
-            throw new Error('username cannot be empty')
-        }
-
-        this.debug(
-            `Discovering offers with tags: ${tags.join(', ')}${username ? ` from @${username}` : ''}`
-        )
-
-        // Discover offers matching tags (use paginated mode to get array)
-        const result = (await this.api.discover({
-            tags,
-            limit: 100,
-        })) as import('../api/client.js').DiscoverResponse
-
-        if (!result.offers || result.offers.length === 0) {
-            throw new Error(`No offers found for tags: ${tags.join(', ')}`)
-        }
-
-        // Filter by username if specified
-        let availableOffers = result.offers
-        if (username) {
-            availableOffers = result.offers.filter(
-                (o: import('../api/client.js').TaggedOffer) => o.username === username
-            )
-            if (availableOffers.length === 0) {
-                throw new Error(`No offers found for tags: ${tags.join(', ')} from @${username}`)
-            }
-        }
-
-        // Pick a random offer
-        const offer = availableOffers[Math.floor(Math.random() * availableOffers.length)]
-        this.debug(`Selected offer ${offer.offerId} from @${offer.username}`)
-
-        // Create RTCConfiguration
-        const rtcConfiguration = rtcConfig || {
-            iceServers: this.iceServers,
-            iceTransportPolicy: this.iceTransportPolicy,
-        }
-
-        // Create AnswererConnection
-        const connection = new AnswererConnection({
-            api: this.api,
-            ownerUsername: offer.username,
-            tags: offer.tags,
-            offerId: offer.offerId,
-            offerSdp: offer.sdp,
-            rtcConfig: rtcConfiguration,
-            webrtcAdapter: this.webrtcAdapter,
-            config: {
-                ...connectionConfig,
-                debug: this.debugEnabled,
-            },
-        })
-
-        // Subscribe to poll:ice events for this connection
-        const connectionOfferId = offer.offerId
-        const pollIceHandler = (data: PollIceEvent) => {
-            if (data.offerId === connectionOfferId) {
-                connection.handleRemoteIceCandidates(data.candidates)
-            }
-        }
-        this.on('poll:ice', pollIceHandler)
-
-        // Clean up handler when connection closes
-        connection.on('closed', () => {
-            this.off('poll:ice', pollIceHandler)
-        })
-
-        // Start polling if not already running
-        if (!this.pollingManager.isRunning()) {
-            this.debug('Starting polling for answerer connection')
-            this.pollingManager.start()
-        }
-
-        // Initialize the connection
-        await connection.initialize()
-
-        return connection
     }
 
     /**

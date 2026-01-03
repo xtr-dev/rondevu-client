@@ -89,7 +89,14 @@ export function getIceConfiguration(
         }
     }
 
-    return {
-        iceServers: iceServers || [{ urls: 'stun:stun.l.google.com:19302' }],
+    // Default to rondevu preset if no ICE servers specified
+    if (!iceServers) {
+        const preset = ICE_SERVER_PRESETS.rondevu
+        return {
+            iceServers: preset.iceServers,
+            iceTransportPolicy: preset.iceTransportPolicy,
+        }
     }
+
+    return { iceServers }
 }

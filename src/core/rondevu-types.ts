@@ -83,20 +83,6 @@ export interface ConnectionContext {
 }
 
 /**
- * Options for rondevu.connect() - connecting to discovered offers
- */
-export interface ConnectOptions {
-    /** Tags to discover by (e.g., ["chat"]) */
-    tags: string[]
-    /** Filter by specific username */
-    username?: string
-    /** Override default ICE configuration */
-    rtcConfig?: RTCConfiguration
-    /** Connection durability configuration */
-    connectionConfig?: Partial<ConnectionConfig>
-}
-
-/**
  * Options for rondevu.discover() - discovering available offers
  */
 export interface DiscoverOptions {

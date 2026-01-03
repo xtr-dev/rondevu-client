@@ -25,12 +25,6 @@ export { Peer } from './peer.js'
 export { ICE_SERVER_PRESETS } from './ice-config.js'
 
 // Essential types for configuration
-export type { RondevuOptions, OfferOptions } from './rondevu.js'
-export type { PeerState, PeerEventMap, PeerOptions } from './peer.js'
-export type { ConnectionState } from '../connections/events.js'
-export type { ConnectionOptions } from '../connections/config.js'
+export type { RondevuOptions, OfferOptions, DiscoverOptions, DiscoverResult } from './rondevu.js'
+export type { PeerState, PeerOptions } from './peer.js'
 export type { IceServerPreset } from './ice-config.js'
-
-// Types for advanced use cases (discovery, credentials)
-export type { Credential, TaggedOffer } from '../api/client.js'
-export type { DiscoverOptions, DiscoverResult } from './rondevu.js'
