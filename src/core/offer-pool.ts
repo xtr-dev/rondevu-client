@@ -1,8 +1,10 @@
 import { EventEmitter } from 'eventemitter3'
-import { RondevuAPI } from '../api/client.js'
+import { RondevuAPI, IceCandidate } from '../api/client.js'
 import { OffererConnection } from '../connections/offerer.js'
 import { ConnectionConfig } from '../connections/config.js'
 import { AsyncLock } from '../utils/async-lock.js'
+import { WebRTCAdapter } from '../webrtc/adapter.js'
+import type { PollAnswerEvent, PollIceEvent } from './polling-manager.js'
 
 export type OfferFactory = (pc: RTCPeerConnection) => Promise<{
     dc?: RTCDataChannel
@@ -11,34 +13,44 @@ export type OfferFactory = (pc: RTCPeerConnection) => Promise<{
 
 export interface OfferPoolOptions {
     api: RondevuAPI
-    serviceFqn: string
+    tags: string[]
+    ownerUsername: string
     maxOffers: number
     offerFactory: OfferFactory
     ttl: number
     iceServers: RTCIceServer[]
+    iceTransportPolicy?: RTCIceTransportPolicy
+    webrtcAdapter: WebRTCAdapter
     connectionConfig?: Partial<ConnectionConfig>
     debugEnabled?: boolean
 }
 
 interface OfferPoolEvents {
     'connection:opened': (offerId: string, connection: OffererConnection) => void
-    'offer:created': (offerId: string, serviceFqn: string) => void
+    'offer:created': (offerId: string, tags: string[]) => void
     'offer:failed': (offerId: string, error: Error) => void
-    'connection:rotated': (oldOfferId: string, newOfferId: string, connection: OffererConnection) => void
+    'connection:rotated': (
+        oldOfferId: string,
+        newOfferId: string,
+        connection: OffererConnection
+    ) => void
 }
 
 /**
- * OfferPool manages a pool of WebRTC offers for a published service.
+ * OfferPool manages a pool of WebRTC offers for published tags.
  * Maintains a target number of active offers and automatically replaces
  * offers that fail or get answered.
  */
 export class OfferPool extends EventEmitter<OfferPoolEvents> {
     private readonly api: RondevuAPI
-    private readonly serviceFqn: string
+    private readonly tags: string[]
+    private readonly ownerUsername: string
     private readonly maxOffers: number
     private readonly offerFactory: OfferFactory
     private readonly ttl: number
     private readonly iceServers: RTCIceServer[]
+    private readonly iceTransportPolicy?: RTCIceTransportPolicy
+    private readonly webrtcAdapter: WebRTCAdapter
     private readonly connectionConfig?: Partial<ConnectionConfig>
     private readonly debugEnabled: boolean
 
@@ -46,25 +58,25 @@ export class OfferPool extends EventEmitter<OfferPoolEvents> {
     private readonly activeConnections = new Map<string, OffererConnection>()
     private readonly fillLock = new AsyncLock()
     private running = false
-    private pollingInterval: ReturnType<typeof setInterval> | null = null
-    private lastPollTimestamp = 0
-
-    private static readonly POLLING_INTERVAL_MS = 1000
 
     constructor(options: OfferPoolOptions) {
         super()
         this.api = options.api
-        this.serviceFqn = options.serviceFqn
+        this.tags = options.tags
+        this.ownerUsername = options.ownerUsername
+        this.webrtcAdapter = options.webrtcAdapter
         this.maxOffers = options.maxOffers
         this.offerFactory = options.offerFactory
         this.ttl = options.ttl
         this.iceServers = options.iceServers
+        this.iceTransportPolicy = options.iceTransportPolicy
         this.connectionConfig = options.connectionConfig
         this.debugEnabled = options.debugEnabled || false
     }
 
     /**
-     * Start filling offers and polling for answers
+     * Start filling offers
+     * Polling is managed externally by Rondevu's PollingManager
      */
     async start(): Promise<void> {
         if (this.running) {
@@ -77,26 +89,15 @@ export class OfferPool extends EventEmitter<OfferPoolEvents> {
 
         // Fill initial offers
         await this.fillOffers()
-
-        // Start polling for answers
-        this.pollingInterval = setInterval(() => {
-            this.pollInternal()
-        }, OfferPool.POLLING_INTERVAL_MS)
     }
 
     /**
-     * Stop filling offers and polling
+     * Stop filling offers
      * Closes all active connections
      */
     stop(): void {
         this.debug('Stopping offer pool')
         this.running = false
-
-        // Stop polling
-        if (this.pollingInterval) {
-            clearInterval(this.pollingInterval)
-            this.pollingInterval = null
-        }
 
         // Close all active connections
         for (const [offerId, connection] of this.activeConnections.entries()) {
@@ -168,6 +169,72 @@ export class OfferPool extends EventEmitter<OfferPoolEvents> {
     }
 
     /**
+     * Create and publish an offer to the server.
+     * Shared logic used by both createOffer() and createNewOfferForRotation().
+     *
+     * @returns The offer ID, RTCPeerConnection, and optional data channel
+     */
+    private async createOfferAndPublish(): Promise<{
+        offerId: string
+        pc: RTCPeerConnection
+        dc?: RTCDataChannel
+    }> {
+        const rtcConfig: RTCConfiguration = {
+            iceServers: this.iceServers,
+            iceTransportPolicy: this.iceTransportPolicy,
+        }
+
+        // 1. Create RTCPeerConnection using adapter
+        const pc = this.webrtcAdapter.createPeerConnection(rtcConfig)
+
+        // Collect ICE candidates during offer creation
+        // We need to set this up BEFORE setLocalDescription is called
+        const collectedCandidates: RTCIceCandidateInit[] = []
+        pc.onicecandidate = event => {
+            if (event.candidate) {
+                collectedCandidates.push({
+                    candidate: event.candidate.candidate,
+                    sdpMLineIndex: event.candidate.sdpMLineIndex,
+                    sdpMid: event.candidate.sdpMid,
+                })
+            }
+        }
+
+        // 2. Call the factory to create offer
+        let dc: RTCDataChannel | undefined
+        let offer: RTCSessionDescriptionInit
+        try {
+            const factoryResult = await this.offerFactory(pc)
+            dc = factoryResult.dc
+            offer = factoryResult.offer
+        } catch (err) {
+            pc.close()
+            throw err
+        }
+
+        // 3. Publish to server to get offerId
+        const result = await this.api.publish({
+            tags: this.tags,
+            offers: [{ sdp: offer.sdp! }],
+            ttl: this.ttl,
+        })
+
+        const offerId = result.offers[0].offerId
+
+        // 4. Send any ICE candidates we've already collected
+        if (collectedCandidates.length > 0) {
+            this.debug(
+                `Sending ${collectedCandidates.length} early ICE candidates for offer ${offerId}`
+            )
+            this.api.addOfferIceCandidates(offerId, collectedCandidates).catch(err => {
+                this.debug('Failed to send early ICE candidates:', err)
+            })
+        }
+
+        return { offerId, pc, dc }
+    }
+
+    /**
      * Create a new offer for rotation (reuses existing creation logic)
      * Similar to createOffer() but only creates the offer, doesn't create connection
      */
@@ -176,82 +243,27 @@ export class OfferPool extends EventEmitter<OfferPoolEvents> {
         pc: RTCPeerConnection
         dc?: RTCDataChannel
     }> {
-        const rtcConfig: RTCConfiguration = {
-            iceServers: this.iceServers
-        }
-
         this.debug('Creating new offer for rotation...')
-
-        // 1. Create RTCPeerConnection
-        const pc = new RTCPeerConnection(rtcConfig)
-
-        // 2. Call the factory to create offer
-        let dc: RTCDataChannel | undefined
-        let offer: RTCSessionDescriptionInit
-        try {
-            const factoryResult = await this.offerFactory(pc)
-            dc = factoryResult.dc
-            offer = factoryResult.offer
-        } catch (err) {
-            pc.close()
-            throw err
-        }
-
-        // 3. Publish to server to get offerId
-        const result = await this.api.publishService({
-            serviceFqn: this.serviceFqn,
-            offers: [{ sdp: offer.sdp! }],
-            ttl: this.ttl,
-        })
-
-        const newOfferId = result.offers[0].offerId
-
-        this.debug(`New offer created for rotation: ${newOfferId}`)
-
-        return { newOfferId, pc, dc }
+        const { offerId, pc, dc } = await this.createOfferAndPublish()
+        this.debug(`New offer created for rotation: ${offerId}`)
+        return { newOfferId: offerId, pc, dc }
     }
 
     /**
      * Create a single offer and publish it to the server
      */
     private async createOffer(): Promise<void> {
-        const rtcConfig: RTCConfiguration = {
-            iceServers: this.iceServers
-        }
-
         this.debug('Creating new offer...')
+        const { offerId, pc, dc } = await this.createOfferAndPublish()
 
-        // 1. Create RTCPeerConnection
-        const pc = new RTCPeerConnection(rtcConfig)
-
-        // 2. Call the factory to create offer
-        let dc: RTCDataChannel | undefined
-        let offer: RTCSessionDescriptionInit
-        try {
-            const factoryResult = await this.offerFactory(pc)
-            dc = factoryResult.dc
-            offer = factoryResult.offer
-        } catch (err) {
-            pc.close()
-            throw err
-        }
-
-        // 3. Publish to server to get offerId
-        const result = await this.api.publishService({
-            serviceFqn: this.serviceFqn,
-            offers: [{ sdp: offer.sdp! }],
-            ttl: this.ttl,
-        })
-
-        const offerId = result.offers[0].offerId
-
-        // 4. Create OffererConnection instance
+        // Create OffererConnection instance
         const connection = new OffererConnection({
             api: this.api,
-            serviceFqn: this.serviceFqn,
+            ownerUsername: this.ownerUsername,
             offerId,
             pc,
             dc,
+            webrtcAdapter: this.webrtcAdapter,
             config: {
                 ...this.connectionConfig,
                 debug: this.debugEnabled,
@@ -264,9 +276,18 @@ export class OfferPool extends EventEmitter<OfferPoolEvents> {
             this.emit('connection:opened', offerId, connection)
         })
 
-        connection.on('failed', async (error) => {
+        connection.on('failed', async error => {
             const currentOfferId = connection.getOfferId()
-            this.debug(`Connection failed for offer ${currentOfferId}, rotating...`)
+            this.debug(`Connection failed for offer ${currentOfferId}`)
+
+            // Double-check connection state before rotating
+            // (polling events may have already recovered the connection)
+            if (connection.getState() !== 'failed') {
+                this.debug(`Connection ${currentOfferId} recovered, skipping rotation`)
+                return
+            }
+
+            this.debug(`Proceeding with rotation for offer ${currentOfferId}`)
 
             try {
                 // Create new offer and rebind existing connection
@@ -281,20 +302,19 @@ export class OfferPool extends EventEmitter<OfferPoolEvents> {
 
                 this.emit('connection:rotated', currentOfferId, newOfferId, connection)
                 this.debug(`Connection rotated: ${currentOfferId} → ${newOfferId}`)
-
             } catch (rotationError) {
                 // If rotation fails, fall back to destroying connection
                 this.debug(`Rotation failed for ${currentOfferId}:`, rotationError)
                 this.activeConnections.delete(currentOfferId)
                 this.emit('offer:failed', currentOfferId, error)
-                this.fillOffers()  // Create replacement
+                this.fillOffers() // Create replacement
             }
         })
 
         connection.on('closed', () => {
             this.debug(`Connection closed for offer ${offerId}`)
             this.activeConnections.delete(offerId)
-            this.fillOffers()  // Replace closed offer
+            this.fillOffers() // Replace closed offer
         })
 
         // Store active connection
@@ -304,36 +324,46 @@ export class OfferPool extends EventEmitter<OfferPoolEvents> {
         await connection.initialize()
 
         this.debug(`Offer created: ${offerId}`)
-        this.emit('offer:created', offerId, this.serviceFqn)
+        this.emit('offer:created', offerId, this.tags)
     }
 
     /**
-     * Poll for answers and delegate to OffererConnections
+     * Handle poll:answer event from PollingManager
+     * Called by Rondevu when a poll:answer event is received
      */
-    private async pollInternal(): Promise<void> {
+    async handlePollAnswer(data: PollAnswerEvent): Promise<void> {
         if (!this.running) return
 
-        try {
-            const result = await this.api.poll(this.lastPollTimestamp)
+        const connection = this.activeConnections.get(data.offerId)
+        if (connection) {
+            this.debug(`Processing answer for offer ${data.offerId}`)
+            try {
+                await connection.processAnswer(data.sdp, data.answererId)
 
-            // Process answers - delegate to OffererConnections
-            for (const answer of result.answers) {
-                const connection = this.activeConnections.get(answer.offerId)
-                if (connection) {
-                    try {
-                        await connection.processAnswer(answer.sdp, answer.answererId)
-                        this.lastPollTimestamp = Math.max(this.lastPollTimestamp, answer.answeredAt)
-
-                        // Create replacement offer
-                        this.fillOffers()
-                    } catch (err) {
-                        this.debug(`Failed to process answer for offer ${answer.offerId}:`, err)
-                    }
-                }
+                // Create replacement offer
+                this.fillOffers()
+            } catch (err) {
+                this.debug(`Failed to process answer for offer ${data.offerId}:`, err)
             }
-        } catch (err) {
-            console.error('[OfferPool] Polling error:', err)
         }
+        // Silently ignore answers for offers we don't have - they may be for other connections
+    }
+
+    /**
+     * Handle poll:ice event from PollingManager
+     * Called by Rondevu when a poll:ice event is received
+     */
+    handlePollIce(data: PollIceEvent): void {
+        if (!this.running) return
+
+        const connection = this.activeConnections.get(data.offerId)
+        if (connection) {
+            this.debug(
+                `Processing ${data.candidates.length} ICE candidates for offer ${data.offerId}`
+            )
+            connection.handleRemoteIceCandidates(data.candidates)
+        }
+        // Silently ignore ICE candidates for offers we don't have
     }
 
     /**

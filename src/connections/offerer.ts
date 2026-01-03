@@ -4,16 +4,18 @@
 
 import { RondevuConnection } from './base.js'
 import { ConnectionState } from './events.js'
-import { RondevuAPI } from '../api/client.js'
+import { RondevuAPI, IceCandidate } from '../api/client.js'
 import { ConnectionConfig } from './config.js'
 import { AsyncLock } from '../utils/async-lock.js'
+import { WebRTCAdapter } from '../webrtc/adapter.js'
 
 export interface OffererOptions {
     api: RondevuAPI
-    serviceFqn: string
+    ownerUsername: string
     offerId: string
-    pc: RTCPeerConnection  // Accept already-created peer connection
-    dc?: RTCDataChannel    // Accept already-created data channel (optional)
+    pc: RTCPeerConnection // Accept already-created peer connection
+    dc?: RTCDataChannel // Accept already-created data channel (optional)
+    webrtcAdapter?: WebRTCAdapter // Optional, defaults to BrowserWebRTCAdapter
     config?: Partial<ConnectionConfig>
 }
 
@@ -22,8 +24,9 @@ export interface OffererOptions {
  */
 export class OffererConnection extends RondevuConnection {
     private api: RondevuAPI
-    private serviceFqn: string
+    private ownerUsername: string
     private offerId: string
+    private _peerUsername: string | null = null
 
     // Rotation tracking
     private rotationLock = new AsyncLock()
@@ -31,14 +34,14 @@ export class OffererConnection extends RondevuConnection {
     private rotationAttempts = 0
     private static readonly MAX_ROTATION_ATTEMPTS = 5
 
+    // ICE candidate buffering (for candidates received before answer is processed)
+    private pendingIceCandidates: IceCandidate[] = []
+
     constructor(options: OffererOptions) {
         // Force reconnectEnabled: false for offerer connections (offers are ephemeral)
-        super(undefined, {
-            ...options.config,
-            reconnectEnabled: false
-        })
+        super(undefined, { ...options.config, reconnectEnabled: false }, options.webrtcAdapter)
         this.api = options.api
-        this.serviceFqn = options.serviceFqn
+        this.ownerUsername = options.ownerUsername
         this.offerId = options.offerId
 
         // Use the already-created peer connection and data channel
@@ -55,7 +58,7 @@ export class OffererConnection extends RondevuConnection {
         if (!this.pc) throw new Error('Peer connection not provided')
 
         // Setup peer connection event handlers
-        this.pc.onicecandidate = (event) => this.handleIceCandidate(event)
+        this.pc.onicecandidate = event => this.handleIceCandidate(event)
         this.pc.oniceconnectionstatechange = () => this.handleIceConnectionStateChange()
         this.pc.onconnectionstatechange = () => this.handleConnectionStateChange()
         this.pc.onicegatheringstatechange = () => this.handleIceGatheringStateChange()
@@ -91,12 +94,18 @@ export class OffererConnection extends RondevuConnection {
                 this.emit('answer:duplicate', this.offerId)
                 return
             } else {
-                throw new Error('Received different answer after already processing one (protocol violation)')
+                throw new Error(
+                    'Received different answer after already processing one (protocol violation)'
+                )
             }
         }
 
-        // Validate state
-        if (this.state !== ConnectionState.SIGNALING && this.state !== ConnectionState.CHECKING) {
+        // Validate state - allow SIGNALING, CHECKING, and FAILED (for late-arriving answers before rotation)
+        if (
+            this.state !== ConnectionState.SIGNALING &&
+            this.state !== ConnectionState.CHECKING &&
+            this.state !== ConnectionState.FAILED
+        ) {
             this.debug(`Cannot process answer in state ${this.state}`)
             return
         }
@@ -111,8 +120,19 @@ export class OffererConnection extends RondevuConnection {
                 sdp,
             })
 
+            // Store the peer username
+            this._peerUsername = answererId
+
             this.debug(`Answer processed successfully from ${answererId}`)
             this.emit('answer:processed', this.offerId, answererId)
+
+            // Apply any buffered ICE candidates that arrived before the answer
+            if (this.pendingIceCandidates.length > 0) {
+                this.debug(`Applying ${this.pendingIceCandidates.length} buffered ICE candidates`)
+                const buffered = this.pendingIceCandidates
+                this.pendingIceCandidates = []
+                this.applyIceCandidates(buffered)
+            }
         } catch (error) {
             // Reset flags on error so we can try again
             this.answerProcessed = false
@@ -158,12 +178,14 @@ export class OffererConnection extends RondevuConnection {
                 this.pc = newPc
                 this.dc = newDc || null
 
-                // 3. Reset answer processing flags
+                // 3. Reset answer processing flags, peer username, and pending candidates
                 this.answerProcessed = false
                 this.answerSdpFingerprint = null
+                this._peerUsername = null
+                this.pendingIceCandidates = []
 
                 // 4. Setup event handlers for new peer connection
-                this.pc.onicecandidate = (event) => this.handleIceCandidate(event)
+                this.pc.onicecandidate = event => this.handleIceCandidate(event)
                 this.pc.oniceconnectionstatechange = () => this.handleIceConnectionStateChange()
                 this.pc.onconnectionstatechange = () => this.handleConnectionStateChange()
                 this.pc.onicegatheringstatechange = () => this.handleIceGatheringStateChange()
@@ -180,7 +202,9 @@ export class OffererConnection extends RondevuConnection {
                 this.transitionTo(ConnectionState.SIGNALING, 'Offer rotated, waiting for answer')
 
                 // Note: Message buffer is NOT cleared - it persists!
-                this.debug(`Rebind complete. Buffer has ${this.messageBuffer?.size() ?? 0} messages`)
+                this.debug(
+                    `Rebind complete. Buffer has ${this.messageBuffer?.size() ?? 0} messages`
+                )
             } finally {
                 this.rotating = false
             }
@@ -213,7 +237,7 @@ export class OffererConnection extends RondevuConnection {
             const data = encoder.encode(sdp)
             const hashBuffer = await crypto.subtle.digest('SHA-256', data)
             const hashArray = Array.from(new Uint8Array(hashBuffer))
-            return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('')
+            return hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
         } else {
             // Fallback: use simple string hash
             let hash = 0
@@ -234,14 +258,14 @@ export class OffererConnection extends RondevuConnection {
 
         // Send ICE candidate to server
         this.api
-            .addOfferIceCandidates(this.serviceFqn, this.offerId, [
+            .addOfferIceCandidates(this.offerId, [
                 {
                     candidate: candidate.candidate,
                     sdpMLineIndex: candidate.sdpMLineIndex,
                     sdpMid: candidate.sdpMid,
                 },
             ])
-            .catch((error) => {
+            .catch(error => {
                 this.debug('Failed to send ICE candidate:', error)
             })
     }
@@ -254,10 +278,10 @@ export class OffererConnection extends RondevuConnection {
     }
 
     /**
-     * Get the service FQN
+     * Get the owner username
      */
-    protected getServiceFqn(): string {
-        return this.serviceFqn
+    protected getOwnerUsername(): string {
+        return this.ownerUsername
     }
 
     /**
@@ -268,18 +292,25 @@ export class OffererConnection extends RondevuConnection {
     }
 
     /**
-     * Attempt to reconnect
+     * Attempt to reconnect (required by abstract base class)
      *
-     * Note: For offerer connections, reconnection is handled by the Rondevu instance
-     * creating a new offer via fillOffers(). This method is a no-op.
+     * For OffererConnection, traditional reconnection is NOT used.
+     * Instead, the OfferPool handles failures via offer rotation:
+     *
+     * 1. When this connection fails, the 'failed' event is emitted
+     * 2. OfferPool detects the failure and calls createNewOfferForRotation()
+     * 3. The new offer is published to the server
+     * 4. This connection is rebound via rebindToOffer()
+     *
+     * This approach ensures the answerer always gets a fresh offer
+     * rather than trying to reconnect to a stale one.
+     *
+     * @see OfferPool.createNewOfferForRotation() - creates replacement offer
+     * @see OffererConnection.rebindToOffer() - rebinds connection to new offer
      */
     protected attemptReconnect(): void {
-        this.debug('Reconnection not applicable for offerer - new offer will be created by Rondevu instance')
-
-        // Offerer reconnection is handled externally by Rondevu.fillOffers()
-        // which creates entirely new offers. We don't reconnect the same offer.
-        // Just emit failure and let the parent handle it.
-        this.emit('reconnect:failed', new Error('Offerer reconnection handled by parent'))
+        this.debug('Reconnection delegated to OfferPool rotation mechanism')
+        this.emit('reconnect:failed', new Error('Offerer uses rotation, not reconnection'))
     }
 
     /**
@@ -287,5 +318,57 @@ export class OffererConnection extends RondevuConnection {
      */
     getOfferId(): string {
         return this.offerId
+    }
+
+    /**
+     * Get the peer username (who answered this offer)
+     * Returns null if no answer has been processed yet
+     */
+    get peerUsername(): string | null {
+        return this._peerUsername
+    }
+
+    /**
+     * Handle remote ICE candidates received from polling
+     * Called by OfferPool when poll:ice event is received
+     */
+    handleRemoteIceCandidates(candidates: IceCandidate[]): void {
+        if (!this.pc) {
+            this.debug('Cannot add ICE candidates: peer connection not initialized')
+            return
+        }
+
+        // If answer hasn't been processed yet, buffer the candidates
+        if (!this.answerProcessed) {
+            this.debug(`Buffering ${candidates.length} ICE candidates (waiting for answer)`)
+            this.pendingIceCandidates.push(...candidates)
+            return
+        }
+
+        // Answer is processed, apply candidates immediately
+        this.applyIceCandidates(candidates)
+    }
+
+    /**
+     * Apply ICE candidates to the peer connection
+     */
+    private applyIceCandidates(candidates: IceCandidate[]): void {
+        if (!this.pc) return
+
+        for (const iceCandidate of candidates) {
+            // Offerer accepts answerer's candidates (no role filtering needed here
+            // since OfferPool already filters by offerId)
+            if (iceCandidate.candidate) {
+                const rtcCandidate = this.webrtcAdapter.createIceCandidate(iceCandidate.candidate)
+                this.pc
+                    .addIceCandidate(rtcCandidate)
+                    .then(() => {
+                        this.emit('ice:candidate:remote', rtcCandidate)
+                    })
+                    .catch(error => {
+                        this.debug('Failed to add ICE candidate:', error)
+                    })
+            }
+        }
     }
 }

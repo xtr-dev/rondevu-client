@@ -2,9 +2,9 @@
 
 [![npm version](https://img.shields.io/npm/v/@xtr-dev/rondevu-client)](https://www.npmjs.com/package/@xtr-dev/rondevu-client)
 
-🌐 **WebRTC signaling client with durable connections**
+**WebRTC signaling client with durable connections**
 
-TypeScript/JavaScript client for Rondevu, providing WebRTC signaling with **automatic reconnection**, **message buffering**, username claiming, service publishing/discovery, and efficient batch polling.
+TypeScript/JavaScript client for Rondevu, providing WebRTC signaling with **automatic reconnection**, **message buffering**, tags-based discovery, and efficient batch polling.
 
 **Related repositories:**
 - [@xtr-dev/rondevu-client](https://github.com/xtr-dev/rondevu-client) - TypeScript client library ([npm](https://www.npmjs.com/package/@xtr-dev/rondevu-client))
@@ -15,24 +15,12 @@ TypeScript/JavaScript client for Rondevu, providing WebRTC signaling with **auto
 
 ## Features
 
-### ✨ New in v0.20.0
-- **🔄 Automatic Reconnection**: Built-in exponential backoff for failed connections
-- **📦 Message Buffering**: Queues messages during disconnections, replays on reconnect
-- **🔄 Connection Persistence**: OffererConnection objects persist across disconnections via offer rotation
-- **📊 Connection State Machine**: Explicit lifecycle tracking with native RTC events
-- **🎯 Rich Event System**: 20+ events for monitoring connection health including `connection:rotated`
-- **⚡ Improved Reliability**: ICE polling lifecycle management, proper cleanup, rotation fallback
-- **🏗️ Internal Refactoring**: Cleaner codebase with OfferPool extraction and consolidated ICE polling
-
-### Core Features
-- **Credential-Based Authentication**: Secure authentication with HMAC-SHA256 signatures
-- **Auto-Generated Credentials**: Server-generated credentials with unique names and secrets
-- **Service Publishing**: Publish services with multiple offers for connection pooling
-- **Service Discovery**: Direct lookup, random discovery, or paginated search
-- **Efficient Polling**: Single endpoint for answers and ICE candidates
-- **Semantic Version Matching**: Compatible version resolution (chat:1.0.0 matches any 1.x.x)
+- **Simple Peer API**: Connect to peers with `rondevu.peer({ tags, username })`
+- **Tags-Based Discovery**: Find peers using tags (e.g., `["chat", "video"]`)
+- **Automatic Reconnection**: Built-in exponential backoff for failed connections
+- **Message Buffering**: Queues messages during disconnections, replays on reconnect
 - **TypeScript**: Full type safety and autocomplete
-- **Credential Management**: Generate or reuse credentials for persistent identities
+- **Credential Management**: Auto-generated or reusable credentials
 
 ## Installation
 
@@ -42,279 +30,217 @@ npm install @xtr-dev/rondevu-client
 
 ## Quick Start
 
-### Publishing a Service (Offerer)
+### Credentials
+
+Credentials are auto-generated on first connect, or you can claim a custom username:
 
 ```typescript
 import { Rondevu } from '@xtr-dev/rondevu-client'
 
-// 1. Connect to Rondevu (credential auto-generated if not provided)
+// Auto-generated username
+const rondevu = await Rondevu.connect({ iceServers: 'ipv4-turn' })
+// rondevu.getName() === 'friendly-panda-a1b2c3'
+
+// Or claim a custom username (4-32 chars, lowercase alphanumeric + dashes + periods)
 const rondevu = await Rondevu.connect({
-  apiUrl: 'https://api.ronde.vu',
-  iceServers: 'ipv4-turn'  // Preset: 'ipv4-turn', 'hostname-turns', 'google-stun', 'relay-only'
-})
-
-console.log('Credential name:', rondevu.getName())
-
-// 2. Publish service with automatic offer management
-await rondevu.publishService({
-  service: 'chat:1.0.0',
-  maxOffers: 5,  // Maintain up to 5 concurrent offers
-  connectionConfig: {
-    reconnectEnabled: true,    // Auto-reconnect on failures
-    bufferEnabled: true,       // Buffer messages during disconnections
-    connectionTimeout: 30000   // 30 second timeout
-  }
-})
-
-// 3. Start accepting connections
-await rondevu.startFilling()
-
-// 4. Handle incoming connections
-rondevu.on('connection:opened', (offerId, connection) => {
-  console.log('New connection:', offerId)
-
-  // Listen for messages
-  connection.on('message', (data) => {
-    console.log('Received:', data)
-  })
-
-  // Monitor connection state
-  connection.on('connected', () => {
-    console.log('Fully connected!')
-    connection.send('Hello from Alice!')
-  })
-
-  connection.on('disconnected', () => {
-    console.log('Connection lost, will auto-reconnect')
-  })
-})
-```
-
-### Connecting to a Service (Answerer)
-
-```typescript
-import { Rondevu } from '@xtr-dev/rondevu-client'
-
-// 1. Connect to Rondevu (credential auto-generated if not provided)
-const rondevu = await Rondevu.connect({
-  apiUrl: 'https://api.ronde.vu',
+  username: 'alice',
   iceServers: 'ipv4-turn'
 })
+// rondevu.getName() === 'alice'
 
-// 2. Connect to service - returns AnswererConnection
-const connection = await rondevu.connectToService({
-  serviceFqn: 'chat:1.0.0@alice',
-  connectionConfig: {
-    reconnectEnabled: true,
-    bufferEnabled: true,
-    maxReconnectAttempts: 5
-  }
-})
+// Get credential to save for later
+const credential = rondevu.getCredential()
+localStorage.setItem('rondevu-credential', JSON.stringify(credential))
 
-// 3. Setup event handlers
-connection.on('connected', () => {
-  console.log('Connected to alice!')
-  connection.send('Hello from Bob!')
-})
-
-connection.on('message', (data) => {
-  console.log('Received:', data)
-})
-
-// 4. Monitor connection health
-connection.on('reconnecting', (attempt) => {
-  console.log(`Reconnecting... attempt ${attempt}`)
-})
-
-connection.on('reconnect:success', () => {
-  console.log('Back online!')
-})
-
-connection.on('failed', (error) => {
-  console.error('Connection failed:', error)
+// Load saved credential
+const saved = JSON.parse(localStorage.getItem('rondevu-credential'))
+const rondevu = await Rondevu.connect({
+  credential: saved,
+  iceServers: 'ipv4-turn'
 })
 ```
 
-## Core API
+### Connecting Peers
+
+Two users who know each other's usernames can connect directly:
+
+```typescript
+import { Rondevu } from '@xtr-dev/rondevu-client'
+
+// ============================================
+// ALICE: Host offers and wait for Bob
+// ============================================
+
+const alice = await Rondevu.connect({
+  credential: aliceCredential,  // Saved credential with known username
+  iceServers: 'ipv4-turn'
+})
+// alice.getName() === 'alice-a1b2c3'
+
+await alice.offer({ tags: ['chat'], maxOffers: 5 })
+await alice.startFilling()
+
+alice.on('connection:opened', (offerId, connection) => {
+  console.log('Alice: connected to', connection.peerUsername)
+
+  connection.on('message', (data) => {
+    console.log('Alice received:', data)
+  })
+
+  connection.send('Hello Bob!')
+})
+
+// ============================================
+// BOB: Connect directly to Alice by username
+// ============================================
+
+const bob = await Rondevu.connect({ iceServers: 'ipv4-turn' })
+
+const peer = await bob.peer({
+  username: 'alice-a1b2c3',  // Connect to Alice specifically
+  tags: ['chat']
+})
+
+peer.on('open', () => {
+  console.log('Bob: connected to', peer.peerUsername)
+  peer.send('Hello Alice!')
+})
+
+peer.on('message', (data) => {
+  console.log('Bob received:', data)
+})
+```
+
+## API Reference
 
 ### Rondevu.connect()
 
 ```typescript
 const rondevu = await Rondevu.connect({
-  apiUrl: string,          // Required: Signaling server URL
-  credential?: Credential, // Optional: reuse existing credential (auto-generates if omitted)
-  cryptoAdapter?: CryptoAdapter,  // Optional: custom crypto implementation
-  iceServers?: IceServerPreset | RTCIceServer[],  // Optional: preset or custom config
-  debug?: boolean          // Optional: enable debug logging (default: false)
+  apiUrl?: string,         // Default: 'https://api.ronde.vu'
+  credential?: Credential, // Optional: reuse existing credential
+  username?: string,       // Optional: claim custom username (4-32 chars)
+  iceServers?: IceServerPreset | RTCIceServer[],  // Optional: 'ipv4-turn', 'hostname-turns', 'google-stun', 'relay-only'
+  debug?: boolean          // Optional: enable debug logging
 })
 ```
 
-### Service Publishing
+### rondevu.peer() - Connect to a Peer
 
 ```typescript
-await rondevu.publishService({
-  service: string,        // e.g., 'chat:1.0.0' (username auto-appended)
-  maxOffers: number,      // Maximum concurrent offers to maintain
-  offerFactory?: OfferFactory,  // Optional: custom offer creation
-  ttl?: number,           // Optional: offer lifetime in ms (default: 300000)
-  connectionConfig?: Partial<ConnectionConfig>  // Optional: durability settings
+const peer = await rondevu.peer({
+  tags: string[],            // Tags to discover by
+  username?: string,         // Optional: specific user
+  rtcConfig?: RTCConfiguration,
+  config?: Partial<ConnectionConfig>
+})
+
+// Events
+peer.on('open', () => {})
+peer.on('close', (reason) => {})
+peer.on('message', (data) => {})
+peer.on('state', (state, prev) => {})
+peer.on('error', (error) => {})
+peer.on('reconnecting', (attempt, max) => {})
+
+// Properties
+peer.state          // PeerState
+peer.peerUsername   // string
+peer.isConnected    // boolean
+peer.peerConnection // RTCPeerConnection | null
+peer.dataChannel    // RTCDataChannel | null
+
+// Methods
+peer.send(data)
+peer.close()
+```
+
+### rondevu.offer() - Host Offers
+
+```typescript
+await rondevu.offer({
+  tags: string[],           // Tags for discovery
+  maxOffers: number,        // Max concurrent offers
+  offerFactory?: OfferFactory,
+  ttl?: number,             // Offer lifetime in ms (default: 300000)
+  connectionConfig?: Partial<ConnectionConfig>
 })
 
 await rondevu.startFilling()  // Start accepting connections
 rondevu.stopFilling()         // Stop and close all connections
-```
 
-### Connecting to Services
-
-**⚠️ Breaking Change in v0.18.9+:** `connectToService()` now returns `AnswererConnection` instead of `ConnectionContext`.
-
-```typescript
-// New API (v0.18.9/v0.18.11+)
-const connection = await rondevu.connectToService({
-  serviceFqn?: string,     // Full FQN like 'chat:1.0.0@alice'
-  service?: string,        // Service without username (for discovery)
-  username?: string,       // Target username (combined with service)
-  connectionConfig?: Partial<ConnectionConfig>,  // Durability settings
-  rtcConfig?: RTCConfiguration  // Optional: override ICE servers
-})
-
-// Setup event handlers
-connection.on('connected', () => {
+// Events
+rondevu.on('connection:opened', (offerId, connection) => {
+  console.log('Peer connected:', connection.peerUsername)
+  connection.on('message', (data) => {})
   connection.send('Hello!')
 })
+```
 
-connection.on('message', (data) => {
-  console.log(data)
+### rondevu.discover() - Find Offers
+
+```typescript
+const result = await rondevu.discover(['chat', 'video'], {
+  limit: 20,
+  offset: 0
 })
+
+for (const offer of result.offers) {
+  console.log(offer.username, offer.tags, offer.offerId)
+}
 ```
 
 ### Connection Configuration
 
 ```typescript
 interface ConnectionConfig {
-  // Timeouts
-  connectionTimeout: number      // Default: 30000ms (30s)
-  iceGatheringTimeout: number    // Default: 10000ms (10s)
-
-  // Reconnection
+  connectionTimeout: number      // Default: 30000ms
+  iceGatheringTimeout: number    // Default: 10000ms
   reconnectEnabled: boolean      // Default: true
   maxReconnectAttempts: number   // Default: 5 (0 = infinite)
   reconnectBackoffBase: number   // Default: 1000ms
-  reconnectBackoffMax: number    // Default: 30000ms (30s)
-
-  // Message buffering
+  reconnectBackoffMax: number    // Default: 30000ms
   bufferEnabled: boolean         // Default: true
-  maxBufferSize: number          // Default: 100 messages
-  maxBufferAge: number           // Default: 60000ms (1 min)
-
-  // Debug
+  maxBufferSize: number          // Default: 100
+  maxBufferAge: number           // Default: 60000ms
   debug: boolean                 // Default: false
 }
 ```
 
-### Connection Events
+## Advanced API
+
+### rondevu.connect() - Low-Level Connection
+
+For more control, use `rondevu.connect()` instead of `rondevu.peer()`:
 
 ```typescript
-// Lifecycle events
-connection.on('connecting', () => {})
-connection.on('connected', () => {})
-connection.on('disconnected', (reason) => {})
-connection.on('failed', (error) => {})
-connection.on('closed', (reason) => {})
+const connection = await rondevu.connect({
+  tags: ['chat'],
+  username: 'alice',
+  connectionConfig: {
+    reconnectEnabled: true,
+    bufferEnabled: true
+  }
+})
 
-// Reconnection events
-connection.on('reconnecting', (attempt) => {})
+connection.on('connected', () => connection.send('Hello!'))
+connection.on('message', (data) => console.log(data))
+connection.on('reconnect:scheduled', ({ attempt, delay }) => {})
 connection.on('reconnect:success', () => {})
-connection.on('reconnect:failed', (error) => {})
-connection.on('reconnect:exhausted', (attempts) => {})
-
-// Message events
-connection.on('message', (data) => {})
-connection.on('message:buffered', (data) => {})
-connection.on('message:replayed', (message) => {})
-
-// ICE events
-connection.on('ice:connection:state', (state) => {})
-connection.on('ice:polling:started', () => {})
-connection.on('ice:polling:stopped', () => {})
+connection.on('failed', (error) => {})
 ```
-
-### Service Discovery
-
-```typescript
-// Unified discovery API
-const service = await rondevu.findService(
-  'chat:1.0.0@alice',  // Direct lookup (with username)
-  { mode: 'direct' }
-)
-
-const service = await rondevu.findService(
-  'chat:1.0.0',  // Random discovery (without username)
-  { mode: 'random' }
-)
-
-const result = await rondevu.findService(
-  'chat:1.0.0',
-  {
-    mode: 'paginated',
-    limit: 20,
-    offset: 0
-  }
-)
-```
-
-## Migration Guide
-
-**Upgrading from v0.18.10 or earlier?** See [MIGRATION.md](./MIGRATION.md) for detailed upgrade instructions.
-
-### Quick Migration Summary
-
-**Before (v0.18.7/v0.18.10):**
-```typescript
-const context = await rondevu.connectToService({
-  serviceFqn: 'chat:1.0.0@alice',
-  onConnection: ({ dc }) => {
-    dc.addEventListener('message', (e) => console.log(e.data))
-    dc.send('Hello')
-  }
-})
-```
-
-**After (v0.18.9/v0.18.11):**
-```typescript
-const connection = await rondevu.connectToService({
-  serviceFqn: 'chat:1.0.0@alice'
-})
-
-connection.on('connected', () => {
-  connection.send('Hello')  // Use connection.send()
-})
-
-connection.on('message', (data) => {
-  console.log(data)  // data is already extracted
-})
-```
-
-## Advanced Usage
 
 ### Custom Offer Factory
 
 ```typescript
-await rondevu.publishService({
-  service: 'file-transfer:1.0.0',
+await rondevu.offer({
+  tags: ['file-transfer'],
   maxOffers: 3,
   offerFactory: async (pc) => {
-    // Customize data channel settings
     const dc = pc.createDataChannel('files', {
       ordered: true,
       maxRetransmits: 10
     })
-
-    // Add custom listeners
-    dc.addEventListener('open', () => {
-      console.log('Transfer channel ready')
-    })
-
     const offer = await pc.createOffer()
     await pc.setLocalDescription(offer)
     return { dc, offer }
@@ -322,132 +248,58 @@ await rondevu.publishService({
 })
 ```
 
-### Accessing Raw RTCPeerConnection
+### Access Raw RTCPeerConnection
 
 ```typescript
-const connection = await rondevu.connectToService({ ... })
+const peer = await rondevu.peer({ tags: ['chat'] })
 
-// Get raw objects if needed
-const pc = connection.getPeerConnection()
-const dc = connection.getDataChannel()
+// Access underlying WebRTC objects
+const pc = peer.peerConnection
+const dc = peer.dataChannel
 
-// Note: Using raw DataChannel bypasses buffering/reconnection features
-if (dc) {
-  dc.addEventListener('message', (e) => {
-    console.log('Raw message:', e.data)
-  })
+if (pc) {
+  console.log('ICE state:', pc.iceConnectionState)
 }
 ```
 
-### Disabling Durability Features
+## Connection Events (Advanced)
 
 ```typescript
-const connection = await rondevu.connectToService({
-  serviceFqn: 'chat:1.0.0@alice',
-  connectionConfig: {
-    reconnectEnabled: false,  // Disable auto-reconnect
-    bufferEnabled: false,     // Disable message buffering
-  }
-})
+// Lifecycle
+connection.on('connecting', () => {})
+connection.on('connected', () => {})
+connection.on('disconnected', (reason) => {})
+connection.on('failed', (error) => {})
+connection.on('closed', (reason) => {})
+
+// Reconnection
+connection.on('reconnect:scheduled', ({ attempt, delay, maxAttempts }) => {})
+connection.on('reconnect:attempting', (attempt) => {})
+connection.on('reconnect:success', () => {})
+connection.on('reconnect:failed', (error) => {})
+connection.on('reconnect:exhausted', (attempts) => {})
+
+// Messages
+connection.on('message', (data) => {})
+connection.on('message:buffered', (data) => {})
+connection.on('message:replayed', (message) => {})
+
+// ICE
+connection.on('ice:connection:state', (state) => {})
+connection.on('ice:polling:started', () => {})
+connection.on('ice:polling:stopped', () => {})
 ```
 
-## Documentation
+## Tag Validation
 
-📚 **[MIGRATION.md](./MIGRATION.md)** - Upgrade guide from v0.18.7 to v0.18.9
+Tags must be 1-64 characters, lowercase alphanumeric with dots/dashes, starting and ending with alphanumeric.
 
-📚 **[ADVANCED.md](./ADVANCED.md)** - Comprehensive guide including:
-- Detailed API reference for all methods
-- Type definitions and interfaces
-- Platform support (Browser & Node.js)
-- Advanced usage patterns
-- Username rules and service FQN format
-
-## Connection Persistence (v0.20.0+)
-
-Connection objects now persist across disconnections via **"offer rotation"**. When a connection fails, the same connection object is rebound to a new offer instead of being destroyed:
-
-```typescript
-rondevu.on('connection:opened', (offerId, connection) => {
-    console.log(`Connection ${offerId} opened`)
-
-    // Listen for offer rotation
-    rondevu.on('connection:rotated', (oldOfferId, newOfferId, conn) => {
-        if (conn === connection) {
-            console.log(`Connection rotated: ${oldOfferId} → ${newOfferId}`)
-            // Same connection object! Event listeners still work
-            // Message buffer preserved
-        }
-    })
-
-    connection.on('message', (data) => {
-        console.log('Received:', data)
-        // This listener continues working even after rotation
-    })
-
-    connection.on('failed', () => {
-        console.log('Connection failed, will auto-rotate to new offer')
-    })
-})
-```
-
-**Benefits:**
-- ✅ Same connection object remains usable through disconnections
-- ✅ Message buffer preserved during temporary disconnections
-- ✅ Event listeners don't need to be re-registered
-- ✅ Seamless reconnection experience for offerer side
+Valid: `chat`, `video-call`, `com.example.service`
+Invalid: `UPPERCASE`, `-starts-dash`
 
 ## Examples
 
 - [React Demo](https://github.com/xtr-dev/rondevu-demo) - Full browser UI ([live](https://ronde.vu))
-
-## Changelog
-
-### v0.20.0 (Latest)
-- **Connection Persistence** - OffererConnection objects now persist across disconnections
-- **Offer Rotation** - When connection fails, same object is rebound to new offer
-- **Message Buffering** - Now works seamlessly on offerer side through rotations
-- **New Event**: `connection:rotated` emitted when offer is rotated
-- **Internal**: Added `OffererConnection.rebindToOffer()` method
-- **Internal**: Modified OfferPool failure handler to rotate offers instead of destroying connections
-- **Internal**: Added rotation lock to prevent concurrent rotations
-- **Internal**: Added max rotation attempts limit (default: 5)
-- 100% backward compatible - no breaking changes
-
-### v0.19.0
-- **Internal Refactoring** - Improved codebase maintainability (no API changes)
-- Extract OfferPool class for offer lifecycle management
-- Consolidate ICE polling logic (remove ~86 lines of duplicate code)
-- Add AsyncLock utility for race-free concurrent operations
-- Disable reconnection for offerer connections (offers are ephemeral)
-- 100% backward compatible - upgrade without code changes
-
-### v0.18.11
-- Restore EventEmitter-based durable connections (same as v0.18.9)
-- Durable WebRTC connections with state machine
-- Automatic reconnection with exponential backoff
-- Message buffering during disconnections
-- ICE polling lifecycle management
-- **Breaking:** `connectToService()` returns `AnswererConnection` instead of `ConnectionContext`
-- See [MIGRATION.md](./MIGRATION.md) for upgrade guide
-
-### v0.18.10
-- Temporary revert to callback-based API (reverted in v0.18.11)
-
-### v0.18.9
-- Add durable WebRTC connections with state machine
-- Implement automatic reconnection with exponential backoff
-- Add message buffering during disconnections
-- Fix ICE polling lifecycle (stops when connected)
-- Add fillOffers() semaphore to prevent exceeding maxOffers
-- **Breaking:** `connectToService()` returns `AnswererConnection` instead of `ConnectionContext`
-- **Breaking:** `connection:opened` event signature changed
-- See [MIGRATION.md](./MIGRATION.md) for upgrade guide
-
-### v0.18.8
-- Initial durable connections implementation
-
-### v0.18.3
-- Fix EventEmitter cross-platform compatibility
 
 ## License
 

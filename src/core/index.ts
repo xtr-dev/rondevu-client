@@ -1,75 +1,36 @@
 /**
  * @xtr-dev/rondevu-client
  * WebRTC peer signaling client
+ *
+ * Simple API:
+ *   const rondevu = await Rondevu.connect({ apiUrl: 'https://api.ronde.vu' })
+ *
+ *   // Host: publish offers
+ *   await rondevu.offer({ tags: ['chat'] })
+ *   await rondevu.startFilling()
+ *   rondevu.on('connection:opened', (id, conn) => { ... })
+ *
+ *   // Guest: connect to a peer
+ *   const peer = await rondevu.peer({ tags: ['chat'] })
+ *   peer.on('open', () => peer.send('Hello!'))
  */
 
-export { Rondevu, RondevuError, NetworkError, ValidationError, ConnectionError } from './rondevu.js'
-export { RondevuAPI } from '../api/client.js'
+// Main entry point
+export { Rondevu } from './rondevu.js'
 
-// Export connection classes
-export { RondevuConnection } from '../connections/base.js'
-export { OffererConnection } from '../connections/offerer.js'
-export { AnswererConnection } from '../connections/answerer.js'
+// Simplified peer connection
+export { Peer } from './peer.js'
 
-// Export utilities
-export { ExponentialBackoff } from '../utils/exponential-backoff.js'
-export { MessageBuffer } from '../utils/message-buffer.js'
+// ICE server configuration presets
+export { ICE_SERVER_PRESETS } from './ice-config.js'
 
-// Export crypto adapters
-export { WebCryptoAdapter } from '../crypto/web.js'
-export { NodeCryptoAdapter } from '../crypto/node.js'
+// Essential types for configuration
+export type { RondevuOptions, OfferOptions } from './rondevu.js'
+export type { PeerState, PeerEventMap, PeerOptions } from './peer.js'
+export type { ConnectionState } from '../connections/events.js'
+export type { ConnectionOptions } from '../connections/config.js'
+export type { IceServerPreset } from './ice-config.js'
 
-// Export types
-export type {
-    Signaler,
-    Binnable,
-} from './types.js'
-
-export type {
-    Credential,
-    OfferRequest,
-    ServiceRequest,
-    Service,
-    ServiceOffer,
-    IceCandidate,
-    BatcherOptions,
-} from '../api/client.js'
-
-export type {
-    RondevuOptions,
-    PublishServiceOptions,
-    ConnectToServiceOptions,
-    ConnectionContext,
-    OfferContext,
-    OfferFactory,
-    ActiveOffer,
-    FindServiceOptions,
-    ServiceResult,
-    PaginatedServiceResult
-} from './rondevu.js'
-
-export type { CryptoAdapter } from '../crypto/adapter.js'
-
-// Export connection types
-export type {
-    ConnectionConfig,
-} from '../connections/config.js'
-
-export type {
-    ConnectionState,
-    BufferedMessage,
-    ReconnectInfo,
-    StateChangeInfo,
-    ConnectionEventMap,
-    ConnectionEventName,
-    ConnectionEventArgs,
-} from '../connections/events.js'
-
-export type {
-    OffererOptions,
-} from '../connections/offerer.js'
-
-export type {
-    AnswererOptions,
-} from '../connections/answerer.js'
-
+// Types for advanced use cases (discovery, credentials)
+export type { Credential, TaggedOffer } from '../api/client.js'
+export type { DiscoverOptions, DiscoverResult } from './rondevu.js'

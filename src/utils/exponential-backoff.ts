@@ -3,9 +3,9 @@
  */
 
 export interface BackoffConfig {
-    base: number        // Base delay in milliseconds
-    max: number         // Maximum delay in milliseconds
-    jitter: number      // Jitter factor (0-1) to add randomness
+    base: number // Base delay in milliseconds
+    max: number // Maximum delay in milliseconds
+    jitter: number // Jitter factor (0-1) to add randomness
 }
 
 export class ExponentialBackoff {

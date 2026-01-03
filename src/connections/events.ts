@@ -3,16 +3,16 @@
  */
 
 export enum ConnectionState {
-    INITIALIZING = 'initializing',    // Creating peer connection
-    GATHERING = 'gathering',          // ICE gathering in progress
-    SIGNALING = 'signaling',          // Exchanging offer/answer
-    CHECKING = 'checking',            // ICE connectivity checks
-    CONNECTING = 'connecting',        // ICE connection attempts
-    CONNECTED = 'connected',          // Data channel open, working
-    DISCONNECTED = 'disconnected',    // Temporarily disconnected
-    RECONNECTING = 'reconnecting',    // Attempting reconnection
-    FAILED = 'failed',                // Connection failed
-    CLOSED = 'closed',                // Connection closed permanently
+    INITIALIZING = 'initializing', // Creating peer connection
+    GATHERING = 'gathering', // ICE gathering in progress
+    SIGNALING = 'signaling', // Exchanging offer/answer
+    CHECKING = 'checking', // ICE connectivity checks
+    CONNECTING = 'connecting', // ICE connection attempts
+    CONNECTED = 'connected', // Data channel open, working
+    DISCONNECTED = 'disconnected', // Temporarily disconnected
+    RECONNECTING = 'reconnecting', // Attempting reconnection
+    FAILED = 'failed', // Connection failed
+    CLOSED = 'closed', // Connection closed permanently
 }
 
 export interface BufferedMessage {
@@ -41,11 +41,11 @@ export interface StateChangeInfo {
 export interface ConnectionEventMap {
     // Lifecycle events
     'state:changed': [StateChangeInfo]
-    'connecting': []
-    'connected': []
-    'disconnected': [reason?: string]
-    'failed': [error: Error]
-    'closed': [reason?: string]
+    connecting: []
+    connected: []
+    disconnected: [reason?: string]
+    failed: [error: Error]
+    closed: [reason?: string]
 
     // Reconnection events
     'reconnect:scheduled': [ReconnectInfo]
@@ -55,7 +55,7 @@ export interface ConnectionEventMap {
     'reconnect:exhausted': [attempts: number]
 
     // Message events
-    'message': [data: string | ArrayBuffer | Blob]
+    message: [data: string | ArrayBuffer | Blob]
     'message:sent': [data: string | ArrayBuffer | Blob, buffered: boolean]
     'message:buffered': [data: string | ArrayBuffer | Blob]
     'message:replayed': [message: BufferedMessage]

@@ -13,6 +13,8 @@ import {
 } from './events.js'
 import { ExponentialBackoff } from '../utils/exponential-backoff.js'
 import { MessageBuffer } from '../utils/message-buffer.js'
+import { WebRTCAdapter } from '../webrtc/adapter.js'
+import { BrowserWebRTCAdapter } from '../webrtc/browser.js'
 
 /**
  * Abstract base class for WebRTC connections with durability features
@@ -22,6 +24,7 @@ export abstract class RondevuConnection extends EventEmitter<ConnectionEventMap>
     protected dc: RTCDataChannel | null = null
     protected state: ConnectionState = ConnectionState.INITIALIZING
     protected config: ConnectionConfig
+    protected webrtcAdapter: WebRTCAdapter
 
     // Message buffering
     protected messageBuffer: MessageBuffer | null = null
@@ -45,10 +48,12 @@ export abstract class RondevuConnection extends EventEmitter<ConnectionEventMap>
 
     constructor(
         protected rtcConfig?: RTCConfiguration,
-        userConfig?: Partial<ConnectionConfig>
+        userConfig?: Partial<ConnectionConfig>,
+        webrtcAdapter?: WebRTCAdapter
     ) {
         super()
         this.config = mergeConnectionConfig(userConfig)
+        this.webrtcAdapter = webrtcAdapter || new BrowserWebRTCAdapter()
 
         // Initialize message buffer if enabled
         if (this.config.bufferEnabled) {
@@ -105,10 +110,10 @@ export abstract class RondevuConnection extends EventEmitter<ConnectionEventMap>
      * Create and configure RTCPeerConnection
      */
     protected createPeerConnection(): RTCPeerConnection {
-        this.pc = new RTCPeerConnection(this.rtcConfig)
+        this.pc = this.webrtcAdapter.createPeerConnection(this.rtcConfig)
 
         // Setup event handlers BEFORE any signaling
-        this.pc.onicecandidate = (event) => this.handleIceCandidate(event)
+        this.pc.onicecandidate = event => this.handleIceCandidate(event)
         this.pc.oniceconnectionstatechange = () => this.handleIceConnectionStateChange()
         this.pc.onconnectionstatechange = () => this.handleConnectionStateChange()
         this.pc.onicegatheringstatechange = () => this.handleIceGatheringStateChange()
@@ -122,8 +127,8 @@ export abstract class RondevuConnection extends EventEmitter<ConnectionEventMap>
     protected setupDataChannelHandlers(dc: RTCDataChannel): void {
         dc.onopen = () => this.handleDataChannelOpen()
         dc.onclose = () => this.handleDataChannelClose()
-        dc.onerror = (error) => this.handleDataChannelError(error)
-        dc.onmessage = (event) => this.handleMessage(event)
+        dc.onerror = error => this.handleDataChannelError(error)
+        dc.onmessage = event => this.handleMessage(event)
     }
 
     /**
@@ -151,7 +156,8 @@ export abstract class RondevuConnection extends EventEmitter<ConnectionEventMap>
                 if (this.state === ConnectionState.SIGNALING) {
                     this.transitionTo(ConnectionState.CHECKING, 'ICE checking started')
                 }
-                this.startIcePolling()
+                // Note: ICE candidate polling is handled by PollingManager
+                // Candidates are received via handleRemoteIceCandidates()
                 break
 
             case 'connected':
@@ -159,7 +165,10 @@ export abstract class RondevuConnection extends EventEmitter<ConnectionEventMap>
                 this.stopIcePolling()
                 // Wait for data channel to open before transitioning to CONNECTED
                 if (this.dc?.readyState === 'open') {
-                    this.transitionTo(ConnectionState.CONNECTED, 'ICE connected and data channel open')
+                    this.transitionTo(
+                        ConnectionState.CONNECTED,
+                        'ICE connected and data channel open'
+                    )
                     this.onConnected()
                 }
                 break
@@ -229,7 +238,11 @@ export abstract class RondevuConnection extends EventEmitter<ConnectionEventMap>
         this.emit('datachannel:open')
 
         // Only transition to CONNECTED if ICE is also connected
-        if (this.pc && (this.pc.iceConnectionState === 'connected' || this.pc.iceConnectionState === 'completed')) {
+        if (
+            this.pc &&
+            (this.pc.iceConnectionState === 'connected' ||
+                this.pc.iceConnectionState === 'completed')
+        ) {
             this.transitionTo(ConnectionState.CONNECTED, 'Data channel opened and ICE connected')
             this.onConnected()
         }
@@ -303,10 +316,16 @@ export abstract class RondevuConnection extends EventEmitter<ConnectionEventMap>
         this.debug('Starting ICE polling')
         this.emit('ice:polling:started')
 
-        this.lastIcePollTime = Date.now()
+        // Use 0 instead of Date.now() to get ALL existing candidates on first poll
+        // Remote candidates may have been created before this peer's ICE checking started
+        this.lastIcePollTime = 0
+        const pollingStartTime = Date.now()
+
+        // Immediately poll for existing candidates
+        this.pollIceCandidates()
 
         this.icePollingInterval = setInterval(() => {
-            const elapsed = Date.now() - this.lastIcePollTime
+            const elapsed = Date.now() - pollingStartTime
             if (elapsed > this.config.icePollingTimeout) {
                 this.debug('ICE polling timeout')
                 this.stopIcePolling()
@@ -335,9 +354,9 @@ export abstract class RondevuConnection extends EventEmitter<ConnectionEventMap>
     protected abstract getApi(): any
 
     /**
-     * Get the service FQN - subclasses must provide
+     * Get the owner username - subclasses must provide
      */
-    protected abstract getServiceFqn(): string
+    protected abstract getOwnerUsername(): string
 
     /**
      * Get the offer ID - subclasses must provide
@@ -357,11 +376,9 @@ export abstract class RondevuConnection extends EventEmitter<ConnectionEventMap>
     protected pollIceCandidates(): void {
         const acceptRole = this.getIceCandidateRole()
         const api = this.getApi()
-        const serviceFqn = this.getServiceFqn()
         const offerId = this.getOfferId()
 
-        api
-            .getOfferIceCandidates(serviceFqn, offerId, this.lastIcePollTime)
+        api.getOfferIceCandidates(offerId, this.lastIcePollTime)
             .then((result: any) => {
                 if (result.candidates.length > 0) {
                     this.debug(`Received ${result.candidates.length} remote ICE candidates`)
@@ -374,12 +391,13 @@ export abstract class RondevuConnection extends EventEmitter<ConnectionEventMap>
 
                         if (iceCandidate.candidate && this.pc) {
                             const candidate = iceCandidate.candidate
+                            const rtcCandidate = this.webrtcAdapter.createIceCandidate(candidate)
                             this.pc
-                                .addIceCandidate(new RTCIceCandidate(candidate))
+                                .addIceCandidate(rtcCandidate)
                                 .then(() => {
-                                    this.emit('ice:candidate:remote', new RTCIceCandidate(candidate))
+                                    this.emit('ice:candidate:remote', rtcCandidate)
                                 })
-                                .catch((error) => {
+                                .catch(error => {
                                     this.debug('Failed to add ICE candidate:', error)
                                 })
                         }
@@ -453,7 +471,10 @@ export abstract class RondevuConnection extends EventEmitter<ConnectionEventMap>
         if (!this.config.reconnectEnabled || !this.backoff) return
 
         // Check if we've exceeded max attempts
-        if (this.config.maxReconnectAttempts > 0 && this.reconnectAttempts >= this.config.maxReconnectAttempts) {
+        if (
+            this.config.maxReconnectAttempts > 0 &&
+            this.reconnectAttempts >= this.config.maxReconnectAttempts
+        ) {
             this.debug('Max reconnection attempts reached')
             this.emit('reconnect:exhausted', this.reconnectAttempts)
             return
@@ -621,7 +642,7 @@ export abstract class RondevuConnection extends EventEmitter<ConnectionEventMap>
     /**
      * Debug logging helper
      */
-    protected debug(...args: any[]): void {
+    protected debug(...args: unknown[]): void {
         if (this.config.debug) {
             console.log('[RondevuConnection]', ...args)
         }

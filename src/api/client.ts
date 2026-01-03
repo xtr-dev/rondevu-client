@@ -13,24 +13,45 @@ export interface OfferRequest {
     sdp: string
 }
 
-export interface ServiceRequest {
-    serviceFqn: string // Must include username: service:version@username
+// ===== Tags-based API (v2) =====
+
+export interface PublishRequest {
+    tags: string[]
     offers: OfferRequest[]
     ttl?: number
 }
 
-export interface ServiceOffer {
+export interface DiscoverRequest {
+    tags: string[]
+    limit?: number
+    offset?: number
+}
+
+export interface TaggedOffer {
     offerId: string
+    username: string
+    tags: string[]
     sdp: string
     createdAt: number
     expiresAt: number
 }
 
-export interface Service {
-    serviceId: string
-    offers: ServiceOffer[]
+export interface DiscoverResponse {
+    offers: TaggedOffer[]
+    count: number
+    limit: number
+    offset: number
+}
+
+export interface PublishResponse {
     username: string
-    serviceFqn: string
+    tags: string[]
+    offers: Array<{
+        offerId: string
+        sdp: string
+        createdAt: number
+        expiresAt: number
+    }>
     createdAt: number
     expiresAt: number
 }
@@ -91,10 +112,14 @@ export class RondevuAPI {
         // Validate name format (alphanumeric, dots, underscores, hyphens only)
         // Limit to prevent HTTP header size issues
         if (credential.name.length > RondevuAPI.DEFAULT_CREDENTIAL_NAME_MAX_LENGTH) {
-            throw new Error(`Invalid credential: name must not exceed ${RondevuAPI.DEFAULT_CREDENTIAL_NAME_MAX_LENGTH} characters`)
+            throw new Error(
+                `Invalid credential: name must not exceed ${RondevuAPI.DEFAULT_CREDENTIAL_NAME_MAX_LENGTH} characters`
+            )
         }
         if (!/^[a-zA-Z0-9._-]+$/.test(credential.name)) {
-            throw new Error('Invalid credential: name must contain only alphanumeric characters, dots, underscores, and hyphens')
+            throw new Error(
+                'Invalid credential: name must contain only alphanumeric characters, dots, underscores, and hyphens'
+            )
         }
 
         // Validate secret
@@ -103,7 +128,9 @@ export class RondevuAPI {
         }
         // Minimum 256 bits (64 hex characters) for security
         if (credential.secret.length < RondevuAPI.DEFAULT_SECRET_MIN_LENGTH) {
-            throw new Error(`Invalid credential: secret must be at least 256 bits (${RondevuAPI.DEFAULT_SECRET_MIN_LENGTH} hex characters)`)
+            throw new Error(
+                `Invalid credential: secret must be at least 256 bits (${RondevuAPI.DEFAULT_SECRET_MIN_LENGTH} hex characters)`
+            )
         }
         // Validate secret is valid hex (even length, only hex characters)
         if (credential.secret.length % 2 !== 0) {
@@ -178,7 +205,12 @@ export class RondevuAPI {
      * Note: When params is undefined, it's serialized as "{}" (empty object).
      * This matches the server's expectation for parameterless RPC calls.
      */
-    private buildSignatureMessage(timestamp: number, nonce: string, method: string, params?: any): string {
+    private buildSignatureMessage(
+        timestamp: number,
+        nonce: string,
+        method: string,
+        params?: any
+    ): string {
         if (!method || typeof method !== 'string') {
             throw new Error('Invalid method: must be a non-empty string')
         }
@@ -197,10 +229,12 @@ export class RondevuAPI {
         // Get crypto object from global scope (supports various contexts)
         // In browsers: window.crypto or self.crypto
         // In modern environments: global crypto
-        const globalCrypto = typeof crypto !== 'undefined' ? crypto :
-                            (typeof window !== 'undefined' && window.crypto) ||
-                            (typeof self !== 'undefined' && self.crypto) ||
-                            undefined
+        const globalCrypto =
+            typeof crypto !== 'undefined'
+                ? crypto
+                : (typeof window !== 'undefined' && window.crypto) ||
+                  (typeof self !== 'undefined' && self.crypto) ||
+                  undefined
 
         // Prefer crypto.randomUUID() for widespread support and standard format
         // UUIDv4 provides 122 bits of entropy (6 fixed version/variant bits)
@@ -275,16 +309,25 @@ export class RondevuAPI {
      */
     static async generateCredentials(
         baseUrl: string,
-        expiresAt?: number,
-        options?: { maxRetries?: number; timeout?: number }
+        options?: {
+            name?: string // Optional: claim specific username
+            expiresAt?: number
+            maxRetries?: number
+            timeout?: number
+        }
     ): Promise<Credential> {
         const maxRetries = options?.maxRetries ?? RondevuAPI.DEFAULT_MAX_RETRIES
         const timeout = options?.timeout ?? RondevuAPI.DEFAULT_TIMEOUT_MS
         let lastError: Error | null = null
 
+        // Build params object with optional name and expiresAt
+        const params: { name?: string; expiresAt?: number } = {}
+        if (options?.name) params.name = options.name
+        if (options?.expiresAt) params.expiresAt = options.expiresAt
+
         const request: RpcRequest = {
             method: 'generateCredentials',
-            params: expiresAt ? { expiresAt } : undefined,
+            params: Object.keys(params).length > 0 ? params : undefined,
         }
 
         for (let attempt = 0; attempt < maxRetries; attempt++) {
@@ -306,7 +349,7 @@ export class RondevuAPI {
                             'Content-Type': 'application/json',
                         },
                         body: JSON.stringify([request]), // Server expects array (batch format)
-                        signal: controller.signal
+                        signal: controller.signal,
                     })
 
                     httpStatus = response.status
@@ -366,7 +409,9 @@ export class RondevuAPI {
             }
         }
 
-        throw new Error(`Failed to generate credentials after ${maxRetries} attempts: ${lastError?.message || 'Unknown error'}`)
+        throw new Error(
+            `Failed to generate credentials after ${maxRetries} attempts: ${lastError?.message || 'Unknown error'}`
+        )
     }
 
     /**
@@ -379,53 +424,53 @@ export class RondevuAPI {
     }
 
     // ============================================
-    // Service Management
+    // Tags-based Offer Management (v2)
     // ============================================
 
     /**
-     * Publish a service
+     * Publish offers with tags
      */
-    async publishService(service: ServiceRequest): Promise<Service> {
-        const request: RpcRequest = {
+    async publish(request: PublishRequest): Promise<PublishResponse> {
+        const rpcRequest: RpcRequest = {
             method: 'publishOffer',
             params: {
-                serviceFqn: service.serviceFqn,
-                offers: service.offers,
-                ttl: service.ttl,
+                tags: request.tags,
+                offers: request.offers,
+                ttl: request.ttl,
             },
         }
-        const authHeaders = await this.generateAuthHeaders(request)
-        return await this.rpc(request, authHeaders)
+        const authHeaders = await this.generateAuthHeaders(rpcRequest)
+        return await this.rpc(rpcRequest, authHeaders)
     }
 
     /**
-     * Get service by FQN (direct lookup, random, or paginated)
+     * Discover offers by tags
+     * @param request - Discovery request with tags and optional pagination
+     * @returns Paginated response if limit provided, single offer if not
      */
-    async getService(
-        serviceFqn: string,
-        options?: { limit?: number; offset?: number }
-    ): Promise<any> {
-        const request: RpcRequest = {
-            method: 'getOffer',
+    async discover(request: DiscoverRequest): Promise<DiscoverResponse | TaggedOffer> {
+        const rpcRequest: RpcRequest = {
+            method: 'discover',
             params: {
-                serviceFqn,
-                ...options,
+                tags: request.tags,
+                limit: request.limit,
+                offset: request.offset,
             },
         }
-        const authHeaders = await this.generateAuthHeaders(request)
-        return await this.rpc(request, authHeaders)
+        const authHeaders = await this.generateAuthHeaders(rpcRequest)
+        return await this.rpc(rpcRequest, authHeaders)
     }
 
     /**
-     * Delete a service
+     * Delete an offer by ID
      */
-    async deleteService(serviceFqn: string): Promise<void> {
+    async deleteOffer(offerId: string): Promise<{ success: boolean }> {
         const request: RpcRequest = {
             method: 'deleteOffer',
-            params: { serviceFqn },
+            params: { offerId },
         }
         const authHeaders = await this.generateAuthHeaders(request)
-        await this.rpc(request, authHeaders)
+        return await this.rpc(request, authHeaders)
     }
 
     // ============================================
@@ -435,10 +480,10 @@ export class RondevuAPI {
     /**
      * Answer an offer
      */
-    async answerOffer(serviceFqn: string, offerId: string, sdp: string): Promise<void> {
+    async answerOffer(offerId: string, sdp: string): Promise<void> {
         const request: RpcRequest = {
             method: 'answerOffer',
-            params: { serviceFqn, offerId, sdp },
+            params: { offerId, sdp },
         }
         const authHeaders = await this.generateAuthHeaders(request)
         await this.rpc(request, authHeaders)
@@ -448,13 +493,12 @@ export class RondevuAPI {
      * Get answer for a specific offer (offerer polls this)
      */
     async getOfferAnswer(
-        serviceFqn: string,
         offerId: string
     ): Promise<{ sdp: string; offerId: string; answererId: string; answeredAt: number } | null> {
         try {
             const request: RpcRequest = {
                 method: 'getOfferAnswer',
-                params: { serviceFqn, offerId },
+                params: { offerId },
             }
             const authHeaders = await this.generateAuthHeaders(request)
             return await this.rpc(request, authHeaders)
@@ -472,7 +516,6 @@ export class RondevuAPI {
     async poll(since?: number): Promise<{
         answers: Array<{
             offerId: string
-            serviceId?: string
             answererId: string
             sdp: string
             answeredAt: number
@@ -499,13 +542,12 @@ export class RondevuAPI {
      * Add ICE candidates to a specific offer
      */
     async addOfferIceCandidates(
-        serviceFqn: string,
         offerId: string,
         candidates: RTCIceCandidateInit[]
     ): Promise<{ count: number; offerId: string }> {
         const request: RpcRequest = {
             method: 'addIceCandidates',
-            params: { serviceFqn, offerId, candidates },
+            params: { offerId, candidates },
         }
         const authHeaders = await this.generateAuthHeaders(request)
         return await this.rpc(request, authHeaders)
@@ -515,13 +557,12 @@ export class RondevuAPI {
      * Get ICE candidates for a specific offer
      */
     async getOfferIceCandidates(
-        serviceFqn: string,
         offerId: string,
         since: number = 0
     ): Promise<{ candidates: IceCandidate[]; offerId: string }> {
         const request: RpcRequest = {
             method: 'getIceCandidates',
-            params: { serviceFqn, offerId, since },
+            params: { offerId, since },
         }
         const authHeaders = await this.generateAuthHeaders(request)
         const result = await this.rpc(request, authHeaders)

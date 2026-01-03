@@ -4,15 +4,18 @@
 
 import { RondevuConnection } from './base.js'
 import { ConnectionState } from './events.js'
-import { RondevuAPI } from '../api/client.js'
+import { RondevuAPI, IceCandidate } from '../api/client.js'
 import { ConnectionConfig } from './config.js'
+import { WebRTCAdapter } from '../webrtc/adapter.js'
 
 export interface AnswererOptions {
     api: RondevuAPI
-    serviceFqn: string
+    ownerUsername: string
+    tags: string[]
     offerId: string
     offerSdp: string
     rtcConfig?: RTCConfiguration
+    webrtcAdapter?: WebRTCAdapter // Optional, defaults to BrowserWebRTCAdapter
     config?: Partial<ConnectionConfig>
 }
 
@@ -21,14 +24,16 @@ export interface AnswererOptions {
  */
 export class AnswererConnection extends RondevuConnection {
     private api: RondevuAPI
-    private serviceFqn: string
+    private ownerUsername: string
+    private tags: string[]
     private offerId: string
     private offerSdp: string
 
     constructor(options: AnswererOptions) {
-        super(options.rtcConfig, options.config)
+        super(options.rtcConfig, options.config, options.webrtcAdapter)
         this.api = options.api
-        this.serviceFqn = options.serviceFqn
+        this.ownerUsername = options.ownerUsername
+        this.tags = options.tags
         this.offerId = options.offerId
         this.offerSdp = options.offerSdp
     }
@@ -45,7 +50,7 @@ export class AnswererConnection extends RondevuConnection {
 
         // Setup ondatachannel handler BEFORE setting remote description
         // This is critical to avoid race conditions
-        this.pc.ondatachannel = (event) => {
+        this.pc.ondatachannel = event => {
             this.debug('Received data channel')
             this.dc = event.channel
             this.setupDataChannelHandlers(this.dc)
@@ -69,7 +74,10 @@ export class AnswererConnection extends RondevuConnection {
         this.debug('Answer created, sending to server')
 
         // Send answer to server
-        await this.api.answerOffer(this.serviceFqn, this.offerId, answer.sdp!)
+        await this.api.answerOffer(this.offerId, answer.sdp!)
+
+        // Note: ICE candidate polling is handled by PollingManager
+        // Candidates are received via handleRemoteIceCandidates()
 
         this.debug('Answer sent successfully')
     }
@@ -83,14 +91,14 @@ export class AnswererConnection extends RondevuConnection {
         // For answerer, we add ICE candidates to the offer
         // The server will make them available for the offerer to poll
         this.api
-            .addOfferIceCandidates(this.serviceFqn, this.offerId, [
+            .addOfferIceCandidates(this.offerId, [
                 {
                     candidate: candidate.candidate,
                     sdpMLineIndex: candidate.sdpMLineIndex,
                     sdpMid: candidate.sdpMid,
                 },
             ])
-            .catch((error) => {
+            .catch(error => {
                 this.debug('Failed to send ICE candidate:', error)
             })
     }
@@ -103,10 +111,10 @@ export class AnswererConnection extends RondevuConnection {
     }
 
     /**
-     * Get the service FQN
+     * Get the owner username
      */
-    protected getServiceFqn(): string {
-        return this.serviceFqn
+    protected getOwnerUsername(): string {
+        return this.ownerUsername
     }
 
     /**
@@ -117,12 +125,12 @@ export class AnswererConnection extends RondevuConnection {
     }
 
     /**
-     * Attempt to reconnect
+     * Attempt to reconnect to the same user
      */
     protected attemptReconnect(): void {
-        this.debug('Attempting to reconnect')
+        this.debug(`Attempting to reconnect to ${this.ownerUsername}`)
 
-        // For answerer, we need to fetch a new offer and create a new answer
+        // For answerer, we need to fetch a new offer from the same user
         // Clean up old connection
         if (this.pc) {
             this.pc.close()
@@ -133,18 +141,27 @@ export class AnswererConnection extends RondevuConnection {
             this.dc = null
         }
 
-        // Fetch new offer from service
+        // Discover new offer using tags (use paginated mode to get array)
         this.api
-            .getService(this.serviceFqn)
-            .then((service) => {
-                if (!service || !service.offers || service.offers.length === 0) {
+            .discover({ tags: this.tags, limit: 100 })
+            .then(result => {
+                const response = result as import('../api/client.js').DiscoverResponse
+                if (!response || !response.offers || response.offers.length === 0) {
                     throw new Error('No offers available for reconnection')
                 }
 
-                // Pick a random offer
-                const offer = service.offers[Math.floor(Math.random() * service.offers.length)]
+                // Filter for offers from the same user
+                const userOffers = response.offers.filter(o => o.username === this.ownerUsername)
+                if (userOffers.length === 0) {
+                    throw new Error(`No offers available from ${this.ownerUsername}`)
+                }
+
+                // Pick a random offer from the same user
+                const offer = userOffers[Math.floor(Math.random() * userOffers.length)]
                 this.offerId = offer.offerId
                 this.offerSdp = offer.sdp
+
+                this.debug(`Found new offer ${offer.offerId} from ${this.ownerUsername}`)
 
                 // Reinitialize with new offer
                 return this.initialize()
@@ -152,7 +169,7 @@ export class AnswererConnection extends RondevuConnection {
             .then(() => {
                 this.emit('reconnect:success')
             })
-            .catch((error) => {
+            .catch(error => {
                 this.debug('Reconnection failed:', error)
                 this.emit('reconnect:failed', error as Error)
                 this.scheduleReconnect()
@@ -164,5 +181,35 @@ export class AnswererConnection extends RondevuConnection {
      */
     getOfferId(): string {
         return this.offerId
+    }
+
+    /**
+     * Handle remote ICE candidates received from polling
+     * Called by Rondevu when poll:ice event is received
+     */
+    handleRemoteIceCandidates(candidates: IceCandidate[]): void {
+        if (!this.pc) {
+            this.debug('Cannot add ICE candidates: peer connection not initialized')
+            return
+        }
+
+        for (const iceCandidate of candidates) {
+            // Answerer only accepts offerer's candidates
+            if (iceCandidate.role !== 'offerer') {
+                continue
+            }
+
+            if (iceCandidate.candidate) {
+                const rtcCandidate = this.webrtcAdapter.createIceCandidate(iceCandidate.candidate)
+                this.pc
+                    .addIceCandidate(rtcCandidate)
+                    .then(() => {
+                        this.emit('ice:candidate:remote', rtcCandidate)
+                    })
+                    .catch(error => {
+                        this.debug('Failed to add ICE candidate:', error)
+                    })
+            }
+        }
     }
 }

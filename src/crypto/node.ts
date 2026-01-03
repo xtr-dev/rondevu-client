@@ -31,7 +31,7 @@ export class NodeCryptoAdapter implements CryptoAdapter {
         if (typeof crypto === 'undefined' || !crypto.subtle) {
             throw new Error(
                 'crypto.subtle is not available. ' +
-                'Node.js 19+ is required, or Node.js 18 with --experimental-global-webcrypto flag'
+                    'Node.js 19+ is required, or Node.js 18 with --experimental-global-webcrypto flag'
             )
         }
     }
@@ -112,10 +112,17 @@ export class NodeCryptoAdapter implements CryptoAdapter {
 
             // Use Web Crypto API's verify() for constant-time comparison
             // Returns false for signature mismatch (auth failure)
-            return await crypto.subtle.verify('HMAC', key, signatureBytes as BufferSource, messageBytes)
+            return await crypto.subtle.verify(
+                'HMAC',
+                key,
+                signatureBytes as BufferSource,
+                messageBytes
+            )
         } catch (error) {
             // System/crypto errors - unexpected failures
-            throw new Error(`Signature verification error: ${error instanceof Error ? error.message : String(error)}`)
+            throw new Error(
+                `Signature verification error: ${error instanceof Error ? error.message : String(error)}`
+            )
         }
     }
 

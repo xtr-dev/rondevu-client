@@ -5,8 +5,8 @@
 import { BufferedMessage } from '../connections/events.js'
 
 export interface MessageBufferConfig {
-    maxSize: number       // Maximum number of messages to buffer
-    maxAge: number        // Maximum age of messages in milliseconds
+    maxSize: number // Maximum number of messages to buffer
+    maxAge: number // Maximum age of messages in milliseconds
 }
 
 export class MessageBuffer {
@@ -52,7 +52,7 @@ export class MessageBuffer {
      */
     getValid(): BufferedMessage[] {
         const now = Date.now()
-        return this.buffer.filter((msg) => now - msg.timestamp < this.config.maxAge)
+        return this.buffer.filter(msg => now - msg.timestamp < this.config.maxAge)
     }
 
     /**
@@ -61,7 +61,7 @@ export class MessageBuffer {
     getExpired(): BufferedMessage[] {
         const now = Date.now()
         const expired: BufferedMessage[] = []
-        this.buffer = this.buffer.filter((msg) => {
+        this.buffer = this.buffer.filter(msg => {
             if (now - msg.timestamp >= this.config.maxAge) {
                 expired.push(msg)
                 return false
@@ -75,7 +75,7 @@ export class MessageBuffer {
      * Remove a specific message by ID
      */
     remove(messageId: string): BufferedMessage | null {
-        const index = this.buffer.findIndex((msg) => msg.id === messageId)
+        const index = this.buffer.findIndex(msg => msg.id === messageId)
         if (index === -1) return null
 
         const [removed] = this.buffer.splice(index, 1)
@@ -95,7 +95,7 @@ export class MessageBuffer {
      * Increment attempt count for a message
      */
     incrementAttempt(messageId: string): boolean {
-        const message = this.buffer.find((msg) => msg.id === messageId)
+        const message = this.buffer.find(msg => msg.id === messageId)
         if (!message) return false
 
         message.attempts++
