@@ -64,6 +64,16 @@ export interface OfferOptions {
     ttl?: number
     /** Connection durability configuration */
     connectionConfig?: Partial<ConnectionConfig>
+    /** Auto-start filling offers (default: true). Set to false to manually call startFilling() */
+    autoStart?: boolean
+}
+
+/**
+ * Handle returned by rondevu.offer() for controlling the offer lifecycle
+ */
+export interface OfferHandle {
+    /** Stop filling offers and close all connections */
+    cancel: () => void
 }
 
 /**

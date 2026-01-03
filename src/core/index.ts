@@ -3,12 +3,12 @@
  * WebRTC peer signaling client
  *
  * Simple API:
- *   const rondevu = await Rondevu.connect({ apiUrl: 'https://api.ronde.vu' })
+ *   const rondevu = await Rondevu.connect()
  *
- *   // Host: publish offers
- *   await rondevu.offer({ tags: ['chat'] })
- *   await rondevu.startFilling()
+ *   // Host: publish offers (auto-starts)
+ *   const handle = await rondevu.offer({ tags: ['chat'], maxOffers: 5 })
  *   rondevu.on('connection:opened', (id, conn) => { ... })
+ *   // Later: handle.cancel()
  *
  *   // Guest: connect to a peer
  *   const peer = await rondevu.peer({ tags: ['chat'] })
@@ -25,6 +25,12 @@ export { Peer } from './peer.js'
 export { ICE_SERVER_PRESETS } from './ice-config.js'
 
 // Essential types for configuration
-export type { RondevuOptions, OfferOptions, DiscoverOptions, DiscoverResult } from './rondevu.js'
+export type {
+    RondevuOptions,
+    OfferOptions,
+    OfferHandle,
+    DiscoverOptions,
+    DiscoverResult,
+} from './rondevu.js'
 export type { PeerState, PeerOptions } from './peer.js'
 export type { IceServerPreset } from './ice-config.js'

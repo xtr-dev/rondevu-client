@@ -29,14 +29,14 @@ import { Rondevu } from '@xtr-dev/rondevu-client'
 // ============================================
 const alice = await Rondevu.connect({ username: 'alice' })
 
-await alice.offer({ tags: ['chat'], maxOffers: 5 })
-await alice.startFilling()
-
 alice.on('connection:opened', (offerId, connection) => {
   console.log('Connected to', connection.peerUsername)
   connection.on('message', (data) => console.log('Received:', data))
   connection.send('Hello!')
 })
+
+const handle = await alice.offer({ tags: ['chat'], maxOffers: 5 })
+// Later: handle.cancel() to stop accepting connections
 
 // ============================================
 // BOB: Connect to Alice
@@ -97,15 +97,14 @@ peer.close()
 ### rondevu.offer()
 
 ```typescript
-await rondevu.offer({
+const handle = await rondevu.offer({
   tags: string[],
   maxOffers: number,
-  ttl?: number,  // Offer lifetime in ms (default: 300000)
-  offerFactory?: (pc: RTCPeerConnection) => Promise<{ dc?, offer }>
+  ttl?: number,       // Offer lifetime in ms (default: 300000)
+  autoStart?: boolean // Auto-start filling (default: true)
 })
 
-await rondevu.startFilling()  // Start accepting connections
-rondevu.stopFilling()         // Stop all
+handle.cancel()  // Stop accepting connections
 
 rondevu.on('connection:opened', (offerId, connection) => {
   connection.on('message', (data) => {})

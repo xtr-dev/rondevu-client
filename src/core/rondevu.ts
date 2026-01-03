@@ -17,6 +17,7 @@ import type {
     OfferContext,
     OfferFactory,
     OfferOptions,
+    OfferHandle,
     ConnectionContext,
     DiscoverOptions,
     DiscoveredOffer,
@@ -29,6 +30,7 @@ export type {
     OfferContext,
     OfferFactory,
     OfferOptions,
+    OfferHandle,
     ConnectionContext,
     DiscoverOptions,
     DiscoveredOffer,
@@ -275,30 +277,31 @@ export class Rondevu extends EventEmitter {
 
     /**
      * Create offers with tags for discovery (offerer/host side)
-     * Call startFilling() to begin accepting connections
+     * Auto-starts filling by default. Use the returned handle to cancel.
      *
      * @example
      * ```typescript
-     * await rondevu.offer({
+     * // Auto-start (default)
+     * const handle = await rondevu.offer({
      *   tags: ['chat', 'video'],
-     *   maxOffers: 5,
-     *   connectionConfig: {
-     *     reconnectEnabled: true,
-     *     bufferEnabled: true
-     *   }
+     *   maxOffers: 5
      * })
+     * // Later: handle.cancel() to stop
+     *
+     * // Manual start
+     * await rondevu.offer({ tags: ['chat'], maxOffers: 5, autoStart: false })
      * await rondevu.startFilling()
      * ```
      */
-    async offer(options: OfferOptions): Promise<void> {
-        const { tags, maxOffers, offerFactory, ttl, connectionConfig } = options
+    async offer(options: OfferOptions): Promise<OfferHandle> {
+        const { tags, maxOffers, offerFactory, ttl, connectionConfig, autoStart = true } = options
 
         this.currentTags = tags
         this.connectionConfig = connectionConfig
 
         this.debug(`Creating offers with tags: ${tags.join(', ')} with maxOffers: ${maxOffers}`)
 
-        // Create OfferPool (but don't start it yet - call startFilling() to begin)
+        // Create OfferPool
         this.offerPool = new OfferPool({
             api: this.api,
             tags,
@@ -333,6 +336,16 @@ export class Rondevu extends EventEmitter {
         this.on('poll:ice', data => {
             this.offerPool?.handlePollIce(data)
         })
+
+        // Auto-start if enabled (default)
+        if (autoStart) {
+            await this.startFilling()
+        }
+
+        // Return handle for cancellation
+        return {
+            cancel: () => this.stopFilling(),
+        }
     }
 
     /**
