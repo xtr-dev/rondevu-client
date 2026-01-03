@@ -7,7 +7,13 @@
 /**
  * Available ICE server preset names
  */
-export type IceServerPreset = 'rondevu' | 'rondevu-relay' | 'google-stun' | 'public-stun'
+export type IceServerPreset =
+    | 'rondevu'
+    | 'rondevu-relay'
+    | 'rondevu-ipv4'
+    | 'rondevu-ipv4-relay'
+    | 'google-stun'
+    | 'public-stun'
 
 /**
  * ICE preset configuration containing servers and optional transport policy.
@@ -23,6 +29,8 @@ export interface IcePresetConfig {
  *
  * - `rondevu`: Official Rondevu TURN/STUN servers (recommended)
  * - `rondevu-relay`: Same as rondevu but forces relay mode (hides client IPs)
+ * - `rondevu-ipv4`: Direct IPv4 address (for networks with DNS issues)
+ * - `rondevu-ipv4-relay`: IPv4 with forced relay mode
  * - `google-stun`: Google's free STUN servers (no relay, direct connections only)
  * - `public-stun`: Multiple public STUN servers for redundancy
  */
@@ -55,6 +63,33 @@ export const ICE_SERVER_PRESETS: Record<IceServerPreset, IcePresetConfig> = {
             },
         ],
         iceTransportPolicy: 'relay', // Force relay mode - hides client IPs
+    },
+    'rondevu-ipv4': {
+        iceServers: [
+            { urls: 'stun:57.129.61.67:3478' },
+            {
+                urls: [
+                    'turn:57.129.61.67:3478?transport=tcp',
+                    'turn:57.129.61.67:3478?transport=udp',
+                ],
+                username: 'rondevu',
+                credential: 'rondevu-public-turn',
+            },
+        ],
+    },
+    'rondevu-ipv4-relay': {
+        iceServers: [
+            { urls: 'stun:57.129.61.67:3478' },
+            {
+                urls: [
+                    'turn:57.129.61.67:3478?transport=tcp',
+                    'turn:57.129.61.67:3478?transport=udp',
+                ],
+                username: 'rondevu',
+                credential: 'rondevu-public-turn',
+            },
+        ],
+        iceTransportPolicy: 'relay',
     },
     'google-stun': {
         iceServers: [
