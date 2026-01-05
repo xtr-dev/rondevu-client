@@ -272,8 +272,10 @@ export class OfferPool extends EventEmitter<OfferPoolEvents> {
 
         // Setup connection event handlers
         connection.on('connected', () => {
-            this.debug(`Connection established for offer ${offerId}`)
-            this.emit('connection:opened', offerId, connection)
+            // Use getOfferId() to get current ID after potential rotations
+            const currentOfferId = connection.getOfferId()
+            this.debug(`Connection established for offer ${currentOfferId}`)
+            this.emit('connection:opened', currentOfferId, connection)
         })
 
         connection.on('failed', async error => {
