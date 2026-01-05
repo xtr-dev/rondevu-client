@@ -16,6 +16,7 @@ export interface PollAnswerEvent {
     answererId: string
     sdp: string
     answeredAt: number
+    matchedTags?: string[]
 }
 
 export interface PollIceEvent {
@@ -130,6 +131,7 @@ export class PollingManager extends EventEmitter<PollingManagerEvents> {
                     answererId: answer.answererId,
                     sdp: answer.sdp,
                     answeredAt: answer.answeredAt,
+                    matchedTags: answer.matchedTags,
                 })
 
                 // Update last poll timestamp

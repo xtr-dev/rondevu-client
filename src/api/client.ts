@@ -479,11 +479,14 @@ export class RondevuAPI {
 
     /**
      * Answer an offer
+     * @param offerId The offer ID to answer
+     * @param sdp The SDP answer
+     * @param matchedTags Optional tags that were used to discover this offer
      */
-    async answerOffer(offerId: string, sdp: string): Promise<void> {
+    async answerOffer(offerId: string, sdp: string, matchedTags?: string[]): Promise<void> {
         const request: RpcRequest = {
             method: 'answerOffer',
-            params: { offerId, sdp },
+            params: { offerId, sdp, matchedTags },
         }
         const authHeaders = await this.generateAuthHeaders(request)
         await this.rpc(request, authHeaders)
@@ -492,9 +495,13 @@ export class RondevuAPI {
     /**
      * Get answer for a specific offer (offerer polls this)
      */
-    async getOfferAnswer(
+    async getOfferAnswer(offerId: string): Promise<{
+        sdp: string
         offerId: string
-    ): Promise<{ sdp: string; offerId: string; answererId: string; answeredAt: number } | null> {
+        answererId: string
+        answeredAt: number
+        matchedTags?: string[]
+    } | null> {
         try {
             const request: RpcRequest = {
                 method: 'getOfferAnswer',
@@ -519,6 +526,7 @@ export class RondevuAPI {
             answererId: string
             sdp: string
             answeredAt: number
+            matchedTags?: string[]
         }>
         iceCandidates: Record<
             string,

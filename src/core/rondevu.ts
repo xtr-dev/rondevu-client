@@ -317,8 +317,8 @@ export class Rondevu extends EventEmitter {
         })
 
         // Forward events from OfferPool
-        this.offerPool.on('connection:opened', (offerId, connection) => {
-            this.emit('connection:opened', offerId, connection)
+        this.offerPool.on('connection:opened', (offerId, connection, matchedTags) => {
+            this.emit('connection:opened', offerId, connection, matchedTags)
         })
 
         this.offerPool.on('offer:created', (offerId, tags) => {
@@ -426,6 +426,18 @@ export class Rondevu extends EventEmitter {
     disconnectAll(): void {
         this.debug('Disconnecting all offers')
         this.offerPool?.disconnectAll()
+    }
+
+    /**
+     * Update tags for new offers
+     * Existing offers keep their old tags until they expire/rotate
+     * New offers created during fill will use the updated tags
+     * @param newTags - The new tags to use for future offers
+     */
+    updateOfferTags(newTags: string[]): void {
+        this.debug(`Updating offer tags: ${newTags.join(', ')}`)
+        this.currentTags = newTags
+        this.offerPool?.updateTags(newTags)
     }
 
     /**

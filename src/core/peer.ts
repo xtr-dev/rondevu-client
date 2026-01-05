@@ -178,6 +178,7 @@ export class Peer extends EventEmitter<PeerEventMap> {
                 ...this.connectionConfig,
                 debug: this.debugEnabled,
             },
+            matchedTags: this.tags, // Pass the tags we used to discover this offer
         })
 
         // Wire up events

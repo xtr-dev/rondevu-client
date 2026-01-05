@@ -26,7 +26,11 @@ export interface OfferPoolOptions {
 }
 
 interface OfferPoolEvents {
-    'connection:opened': (offerId: string, connection: OffererConnection) => void
+    'connection:opened': (
+        offerId: string,
+        connection: OffererConnection,
+        matchedTags?: string[]
+    ) => void
     'offer:created': (offerId: string, tags: string[]) => void
     'offer:failed': (offerId: string, error: Error) => void
     'connection:rotated': (
@@ -43,7 +47,7 @@ interface OfferPoolEvents {
  */
 export class OfferPool extends EventEmitter<OfferPoolEvents> {
     private readonly api: RondevuAPI
-    private readonly tags: string[]
+    private tags: string[]
     private readonly ownerUsername: string
     private readonly maxOffers: number
     private readonly offerFactory: OfferFactory
@@ -56,6 +60,7 @@ export class OfferPool extends EventEmitter<OfferPoolEvents> {
 
     // State
     private readonly activeConnections = new Map<string, OffererConnection>()
+    private readonly matchedTagsByOffer = new Map<string, string[]>() // Track matchedTags from answers
     private readonly fillLock = new AsyncLock()
     private running = false
 
@@ -116,6 +121,23 @@ export class OfferPool extends EventEmitter<OfferPoolEvents> {
      */
     getOfferCount(): number {
         return this.activeConnections.size
+    }
+
+    /**
+     * Update tags for new offers
+     * Existing offers keep their old tags until they expire/rotate
+     * New offers created during fill will use the updated tags
+     */
+    updateTags(newTags: string[]): void {
+        this.debug(`Updating tags: ${newTags.join(', ')}`)
+        this.tags = newTags
+    }
+
+    /**
+     * Get current tags
+     */
+    getTags(): string[] {
+        return [...this.tags]
     }
 
     /**
@@ -275,7 +297,12 @@ export class OfferPool extends EventEmitter<OfferPoolEvents> {
             // Use getOfferId() to get current ID after potential rotations
             const currentOfferId = connection.getOfferId()
             this.debug(`Connection established for offer ${currentOfferId}`)
-            this.emit('connection:opened', currentOfferId, connection)
+
+            // Get and clean up matchedTags
+            const matchedTags = this.matchedTagsByOffer.get(currentOfferId)
+            this.matchedTagsByOffer.delete(currentOfferId)
+
+            this.emit('connection:opened', currentOfferId, connection, matchedTags)
         })
 
         connection.on('failed', async error => {
@@ -339,6 +366,12 @@ export class OfferPool extends EventEmitter<OfferPoolEvents> {
         const connection = this.activeConnections.get(data.offerId)
         if (connection) {
             this.debug(`Processing answer for offer ${data.offerId}`)
+
+            // Store matchedTags for when connection opens
+            if (data.matchedTags) {
+                this.matchedTagsByOffer.set(data.offerId, data.matchedTags)
+            }
+
             try {
                 await connection.processAnswer(data.sdp, data.answererId)
 

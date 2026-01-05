@@ -17,6 +17,7 @@ export interface AnswererOptions {
     rtcConfig?: RTCConfiguration
     webrtcAdapter?: WebRTCAdapter // Optional, defaults to BrowserWebRTCAdapter
     config?: Partial<ConnectionConfig>
+    matchedTags?: string[] // Tags that were used to discover this offer
 }
 
 /**
@@ -28,6 +29,7 @@ export class AnswererConnection extends RondevuConnection {
     private tags: string[]
     private offerId: string
     private offerSdp: string
+    private matchedTags?: string[]
 
     constructor(options: AnswererOptions) {
         super(options.rtcConfig, options.config, options.webrtcAdapter)
@@ -36,6 +38,7 @@ export class AnswererConnection extends RondevuConnection {
         this.tags = options.tags
         this.offerId = options.offerId
         this.offerSdp = options.offerSdp
+        this.matchedTags = options.matchedTags
     }
 
     /**
@@ -73,8 +76,8 @@ export class AnswererConnection extends RondevuConnection {
 
         this.debug('Answer created, sending to server')
 
-        // Send answer to server
-        await this.api.answerOffer(this.offerId, answer.sdp!)
+        // Send answer to server (including matched tags so offerer knows which tags we searched for)
+        await this.api.answerOffer(this.offerId, answer.sdp!, this.matchedTags)
 
         // Note: ICE candidate polling is handled by PollingManager
         // Candidates are received via handleRemoteIceCandidates()
