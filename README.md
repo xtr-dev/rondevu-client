@@ -8,7 +8,7 @@ TypeScript client for [Rondevu](https://github.com/xtr-dev/rondevu-server), prov
 
 ## Features
 
-- **Simple Peer API**: Connect with `rondevu.peer({ tags, username })`
+- **Ed25519 Identity**: Your public key IS your identity (like Ethereum addresses)
 - **Tags-Based Discovery**: Find peers using tags (e.g., `["chat", "video"]`)
 - **Automatic Reconnection**: Built-in exponential backoff
 - **Message Buffering**: Queues messages during disconnections
@@ -27,10 +27,10 @@ import { Rondevu } from '@xtr-dev/rondevu-client'
 // ============================================
 // ALICE: Host and wait for connections
 // ============================================
-const alice = await Rondevu.connect({ username: 'alice' })
+const alice = await Rondevu.connect()
 
 alice.on('connection:opened', (offerId, connection) => {
-  console.log('Connected to', connection.peerUsername)
+  console.log('Connected to', connection.peerPublicKey)
   connection.on('message', (data) => console.log('Received:', data))
   connection.send('Hello!')
 })
@@ -43,10 +43,7 @@ const offer = await alice.offer({ tags: ['chat'], maxOffers: 5 })
 // ============================================
 const bob = await Rondevu.connect()
 
-const peer = await bob.peer({
-  username: 'alice',
-  tags: ['chat']
-})
+const peer = await bob.peer({ tags: ['chat'] })
 
 peer.on('open', () => peer.send('Hello Alice!'))
 peer.on('message', (data) => console.log('Received:', data))
@@ -59,14 +56,13 @@ peer.on('message', (data) => console.log('Received:', data))
 ```typescript
 const rondevu = await Rondevu.connect({
   apiUrl?: string,         // Default: 'https://api.ronde.vu'
-  credential?: Credential, // Reuse existing credential
-  username?: string,       // Claim username (4-32 chars)
+  keyPair?: KeyPair,       // Reuse existing keypair
   iceServers?: IceServerPreset | RTCIceServer[],  // Default: 'rondevu'
   debug?: boolean
 })
 
-rondevu.getName()       // Get username
-rondevu.getCredential() // Get credential for reuse
+rondevu.getPublicKey()  // Get public key (your identity)
+rondevu.getKeyPair()    // Get keypair for persistence
 ```
 
 **ICE Presets**: `'rondevu'` (default), `'rondevu-relay'`, `'google-stun'`, `'public-stun'`
@@ -76,7 +72,7 @@ rondevu.getCredential() // Get credential for reuse
 ```typescript
 const peer = await rondevu.peer({
   tags: string[],
-  username?: string,
+  publicKey?: string,       // Connect to specific peer
   rtcConfig?: RTCConfiguration
 })
 
@@ -89,7 +85,7 @@ peer.on('reconnecting', (attempt, max) => {})
 
 // Properties & Methods
 peer.state           // 'connecting' | 'connected' | 'reconnecting' | ...
-peer.peerUsername
+peer.peerPublicKey
 peer.send(data)
 peer.close()
 ```
@@ -116,25 +112,25 @@ rondevu.on('connection:opened', (offerId, connection) => {
 
 ```typescript
 const result = await rondevu.discover(['chat'], { limit: 20 })
-result.offers.forEach(o => console.log(o.username, o.tags))
+result.offers.forEach(o => console.log(o.publicKey, o.tags))
 ```
 
-## Credentials
+## Identity (Ed25519 Keypairs)
+
+Your identity is an Ed25519 public key - no usernames, no registration, no claiming conflicts. Generate a keypair locally and start making requests immediately.
 
 ```typescript
-// Auto-generated username
+// Auto-generated keypair
 const rondevu = await Rondevu.connect()
-// rondevu.getName() === 'friendly-panda-a1b2c3'
+console.log(rondevu.getPublicKey())  // '5a7f3e2d...' (64 hex chars)
 
-// Claimed username
-const rondevu = await Rondevu.connect({ username: 'alice' })
+// Save and restore keypair for persistent identity
+const keyPair = rondevu.getKeyPair()
+localStorage.setItem('keypair', JSON.stringify(keyPair))
 
-// Save and restore credentials
-const credential = rondevu.getCredential()
-localStorage.setItem('cred', JSON.stringify(credential))
-
-const saved = JSON.parse(localStorage.getItem('cred'))
-const rondevu = await Rondevu.connect({ credential: saved })
+// Later: restore
+const saved = JSON.parse(localStorage.getItem('keypair'))
+const rondevu = await Rondevu.connect({ keyPair: saved })
 ```
 
 ## Tag Validation

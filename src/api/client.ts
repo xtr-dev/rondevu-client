@@ -2,11 +2,11 @@
  * Rondevu API Client - RPC interface
  */
 
-import { CryptoAdapter, Credential } from '../crypto/adapter.js'
+import { CryptoAdapter, KeyPair } from '../crypto/adapter.js'
 import { WebCryptoAdapter } from '../crypto/web.js'
 import { RpcBatcher, BatcherOptions } from './batcher.js'
 
-export type { Credential } from '../crypto/adapter.js'
+export type { KeyPair } from '../crypto/adapter.js'
 export type { BatcherOptions } from './batcher.js'
 
 export interface OfferRequest {
@@ -29,7 +29,7 @@ export interface DiscoverRequest {
 
 export interface TaggedOffer {
     offerId: string
-    username: string
+    publicKey: string
     tags: string[]
     sdp: string
     createdAt: number
@@ -44,7 +44,7 @@ export interface DiscoverResponse {
 }
 
 export interface PublishResponse {
-    username: string
+    publicKey: string
     tags: string[]
     offers: Array<{
         offerId: string
@@ -81,14 +81,14 @@ interface RpcResponse {
 
 /**
  * RondevuAPI - RPC-based API client for Rondevu signaling server
+ *
+ * Uses Ed25519 public key cryptography for authentication.
+ * The public key IS the identity (like Ethereum addresses).
  */
 export class RondevuAPI {
-    // Default values for credential generation
-    private static readonly DEFAULT_MAX_RETRIES = 3
-    private static readonly DEFAULT_TIMEOUT_MS = 30000 // 30 seconds
-    private static readonly DEFAULT_CREDENTIAL_NAME_MAX_LENGTH = 128
-    private static readonly DEFAULT_SECRET_MIN_LENGTH = 64 // 256 bits
-    private static readonly MAX_BACKOFF_MS = 60000 // 60 seconds max backoff
+    // Key length constants
+    private static readonly PUBLIC_KEY_LENGTH = 64 // 32 bytes = 64 hex chars
+    private static readonly PRIVATE_KEY_LENGTH = 64 // 32 bytes = 64 hex chars
     private static readonly MAX_CANONICALIZE_DEPTH = 100 // Prevent stack overflow
 
     private crypto: CryptoAdapter
@@ -96,7 +96,7 @@ export class RondevuAPI {
 
     constructor(
         private baseUrl: string,
-        private credential: Credential,
+        private keyPair: KeyPair,
         cryptoAdapter?: CryptoAdapter,
         batcherOptions?: BatcherOptions
     ) {
@@ -105,39 +105,30 @@ export class RondevuAPI {
         // Create batcher for request batching with throttling
         this.batcher = new RpcBatcher(baseUrl, batcherOptions)
 
-        // Validate credential format early to provide clear error messages
-        if (!credential.name || typeof credential.name !== 'string') {
-            throw new Error('Invalid credential: name must be a non-empty string')
+        // Validate public key format
+        if (!keyPair.publicKey || typeof keyPair.publicKey !== 'string') {
+            throw new Error('Invalid keypair: publicKey must be a non-empty string')
         }
-        // Validate name format (alphanumeric, dots, underscores, hyphens only)
-        // Limit to prevent HTTP header size issues
-        if (credential.name.length > RondevuAPI.DEFAULT_CREDENTIAL_NAME_MAX_LENGTH) {
+        if (keyPair.publicKey.length !== RondevuAPI.PUBLIC_KEY_LENGTH) {
             throw new Error(
-                `Invalid credential: name must not exceed ${RondevuAPI.DEFAULT_CREDENTIAL_NAME_MAX_LENGTH} characters`
+                `Invalid keypair: publicKey must be ${RondevuAPI.PUBLIC_KEY_LENGTH} hex characters (32 bytes)`
             )
         }
-        if (!/^[a-zA-Z0-9._-]+$/.test(credential.name)) {
-            throw new Error(
-                'Invalid credential: name must contain only alphanumeric characters, dots, underscores, and hyphens'
-            )
+        if (!/^[0-9a-fA-F]+$/.test(keyPair.publicKey)) {
+            throw new Error('Invalid keypair: publicKey must contain only hexadecimal characters')
         }
 
-        // Validate secret
-        if (!credential.secret || typeof credential.secret !== 'string') {
-            throw new Error('Invalid credential: secret must be a non-empty string')
+        // Validate private key format
+        if (!keyPair.privateKey || typeof keyPair.privateKey !== 'string') {
+            throw new Error('Invalid keypair: privateKey must be a non-empty string')
         }
-        // Minimum 256 bits (64 hex characters) for security
-        if (credential.secret.length < RondevuAPI.DEFAULT_SECRET_MIN_LENGTH) {
+        if (keyPair.privateKey.length !== RondevuAPI.PRIVATE_KEY_LENGTH) {
             throw new Error(
-                `Invalid credential: secret must be at least 256 bits (${RondevuAPI.DEFAULT_SECRET_MIN_LENGTH} hex characters)`
+                `Invalid keypair: privateKey must be ${RondevuAPI.PRIVATE_KEY_LENGTH} hex characters (32 bytes)`
             )
         }
-        // Validate secret is valid hex (even length, only hex characters)
-        if (credential.secret.length % 2 !== 0) {
-            throw new Error('Invalid credential: secret must be a valid hex string (even length)')
-        }
-        if (!/^[0-9a-fA-F]+$/.test(credential.secret)) {
-            throw new Error('Invalid credential: secret must contain only hexadecimal characters')
+        if (!/^[0-9a-fA-F]+$/.test(keyPair.privateKey)) {
+            throw new Error('Invalid keypair: privateKey must contain only hexadecimal characters')
         }
     }
 
@@ -251,7 +242,7 @@ export class RondevuAPI {
 
     /**
      * Generate authentication headers for RPC request
-     * Uses HMAC-SHA256 signature with nonce for replay protection
+     * Uses Ed25519 signature with nonce for replay protection
      *
      * Security notes:
      * - Nonce: Cryptographically secure random value (UUID or 128-bit hex)
@@ -259,7 +250,7 @@ export class RondevuAPI {
      *   - Server validates timestamp is within acceptable range (typically ±5 minutes)
      *   - Tolerates reasonable clock skew between client and server
      *   - Requests with stale timestamps are rejected
-     * - Signature: HMAC-SHA256 ensures message integrity and authenticity
+     * - Signature: Ed25519 ensures message integrity and authenticity
      * - Server validates nonce uniqueness to prevent replay within time window
      *   - Each nonce can only be used once within the timestamp validity window
      *   - Server maintains nonce cache with expiration matching timestamp window
@@ -268,12 +259,12 @@ export class RondevuAPI {
         const timestamp = Date.now()
         const nonce = this.generateNonce()
 
-        // Build message and generate signature
+        // Build message and generate Ed25519 signature
         const message = this.buildSignatureMessage(timestamp, nonce, request.method, request.params)
-        const signature = await this.crypto.generateSignature(this.credential.secret, message)
+        const signature = await this.crypto.signMessage(this.keyPair.privateKey, message)
 
         return {
-            'X-Name': this.credential.name,
+            'X-PublicKey': this.keyPair.publicKey,
             'X-Timestamp': timestamp.toString(),
             'X-Nonce': nonce,
             'X-Signature': signature,
@@ -289,138 +280,19 @@ export class RondevuAPI {
     }
 
     // ============================================
-    // Credential Management
+    // Identity Management (Ed25519 Public Key)
     // ============================================
 
     /**
-     * Generate new credentials (name + secret pair)
-     * This is the entry point for new users - no authentication required
-     * Credentials are generated server-side to ensure security and uniqueness
+     * Generate a new Ed25519 keypair locally
+     * This is completely client-side - no server communication
      *
-     * ⚠️ SECURITY NOTE:
-     * - Store the returned credential securely
-     * - The secret provides full access to this identity
-     * - Credentials should be persisted encrypted and never logged
-     *
-     * @param baseUrl - Rondevu server URL
-     * @param expiresAt - Optional custom expiry timestamp (defaults to 1 year)
-     * @param options - Optional: { maxRetries: number, timeout: number }
-     * @returns Generated credential with name and secret
+     * @param cryptoAdapter - Optional crypto adapter (defaults to WebCryptoAdapter)
+     * @returns Generated keypair with publicKey and privateKey as hex strings
      */
-    static async generateCredentials(
-        baseUrl: string,
-        options?: {
-            name?: string // Optional: claim specific username
-            expiresAt?: number
-            maxRetries?: number
-            timeout?: number
-        }
-    ): Promise<Credential> {
-        const maxRetries = options?.maxRetries ?? RondevuAPI.DEFAULT_MAX_RETRIES
-        const timeout = options?.timeout ?? RondevuAPI.DEFAULT_TIMEOUT_MS
-        let lastError: Error | null = null
-
-        // Build params object with optional name and expiresAt
-        const params: { name?: string; expiresAt?: number } = {}
-        if (options?.name) params.name = options.name
-        if (options?.expiresAt) params.expiresAt = options.expiresAt
-
-        const request: RpcRequest = {
-            method: 'generateCredentials',
-            params: Object.keys(params).length > 0 ? params : undefined,
-        }
-
-        for (let attempt = 0; attempt < maxRetries; attempt++) {
-            // httpStatus is scoped to each iteration intentionally - resets on each retry
-            let httpStatus: number | null = null
-
-            try {
-                // Create abort controller for timeout
-                if (typeof AbortController === 'undefined') {
-                    throw new Error('AbortController not supported in this environment')
-                }
-                const controller = new AbortController()
-                const timeoutId = setTimeout(() => controller.abort(), timeout)
-
-                try {
-                    const response = await fetch(`${baseUrl}/rpc`, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify([request]), // Server expects array (batch format)
-                        signal: controller.signal,
-                    })
-
-                    httpStatus = response.status
-
-                    if (!response.ok) {
-                        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-                    }
-
-                    // Server returns array of responses
-                    const results: RpcResponse[] = await response.json()
-                    const result = results[0]
-
-                    if (!result || !result.success) {
-                        throw new Error(result?.error || 'Failed to generate credentials')
-                    }
-
-                    // Validate credential structure
-                    const credential = result.result
-                    if (!credential || typeof credential !== 'object') {
-                        throw new Error('Invalid credential response: result is not an object')
-                    }
-                    if (typeof credential.name !== 'string' || !credential.name) {
-                        throw new Error('Invalid credential response: missing or invalid name')
-                    }
-                    if (typeof credential.secret !== 'string' || !credential.secret) {
-                        throw new Error('Invalid credential response: missing or invalid secret')
-                    }
-
-                    return credential as Credential
-                } finally {
-                    // Always clear timeout to prevent memory leaks
-                    clearTimeout(timeoutId)
-                }
-            } catch (error) {
-                lastError = error as Error
-
-                // Don't retry on abort (timeout)
-                if (error instanceof Error && error.name === 'AbortError') {
-                    throw new Error(`Credential generation timed out after ${timeout}ms`)
-                }
-
-                // Don't retry on 4xx errors (client errors) - check actual status
-                if (httpStatus !== null && httpStatus >= 400 && httpStatus < 500) {
-                    throw error
-                }
-
-                // Retry with exponential backoff + jitter for network/server errors (5xx or network failures)
-                // Jitter prevents thundering herd when many clients retry simultaneously
-                // Cap backoff to prevent excessive waits
-                if (attempt < maxRetries - 1) {
-                    const backoffMs = Math.min(
-                        1000 * Math.pow(2, attempt) + Math.random() * 1000,
-                        RondevuAPI.MAX_BACKOFF_MS
-                    )
-                    await new Promise(resolve => setTimeout(resolve, backoffMs))
-                }
-            }
-        }
-
-        throw new Error(
-            `Failed to generate credentials after ${maxRetries} attempts: ${lastError?.message || 'Unknown error'}`
-        )
-    }
-
-    /**
-     * Generate a random secret locally (for advanced use cases)
-     * @param cryptoAdapter - Optional crypto adapter
-     */
-    static generateSecret(cryptoAdapter?: CryptoAdapter): string {
+    static async generateKeyPair(cryptoAdapter?: CryptoAdapter): Promise<KeyPair> {
         const adapter = cryptoAdapter || new WebCryptoAdapter()
-        return adapter.generateSecret()
+        return adapter.generateKeyPair()
     }
 
     // ============================================
@@ -498,7 +370,7 @@ export class RondevuAPI {
     async getOfferAnswer(offerId: string): Promise<{
         sdp: string
         offerId: string
-        answererId: string
+        answererPublicKey: string
         answeredAt: number
         matchedTags?: string[]
     } | null> {
@@ -523,7 +395,7 @@ export class RondevuAPI {
     async poll(since?: number): Promise<{
         answers: Array<{
             offerId: string
-            answererId: string
+            answererPublicKey: string
             sdp: string
             answeredAt: number
             matchedTags?: string[]
@@ -533,7 +405,7 @@ export class RondevuAPI {
             Array<{
                 candidate: RTCIceCandidateInit | null
                 role: 'offerer' | 'answerer'
-                peerId: string
+                peerPublicKey: string
                 createdAt: number
             }>
         >

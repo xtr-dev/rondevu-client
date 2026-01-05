@@ -11,7 +11,7 @@ import { WebRTCAdapter } from '../webrtc/adapter.js'
 
 export interface OffererOptions {
     api: RondevuAPI
-    ownerUsername: string
+    ownerPublicKey: string
     offerId: string
     pc: RTCPeerConnection // Accept already-created peer connection
     dc?: RTCDataChannel // Accept already-created data channel (optional)
@@ -24,9 +24,9 @@ export interface OffererOptions {
  */
 export class OffererConnection extends RondevuConnection {
     private api: RondevuAPI
-    private ownerUsername: string
+    private ownerPublicKey: string
     private offerId: string
-    private _peerUsername: string | null = null
+    private _peerPublicKey: string | null = null
 
     // Rotation tracking
     private rotationLock = new AsyncLock()
@@ -41,7 +41,7 @@ export class OffererConnection extends RondevuConnection {
         // Force reconnectEnabled: false for offerer connections (offers are ephemeral)
         super(undefined, { ...options.config, reconnectEnabled: false }, options.webrtcAdapter)
         this.api = options.api
-        this.ownerUsername = options.ownerUsername
+        this.ownerPublicKey = options.ownerPublicKey
         this.offerId = options.offerId
 
         // Use the already-created peer connection and data channel
@@ -78,7 +78,7 @@ export class OffererConnection extends RondevuConnection {
     /**
      * Process an answer from the answerer
      */
-    async processAnswer(sdp: string, answererId: string): Promise<void> {
+    async processAnswer(sdp: string, answererPublicKey: string): Promise<void> {
         if (!this.pc) {
             this.debug('Cannot process answer: peer connection not initialized')
             return
@@ -120,11 +120,11 @@ export class OffererConnection extends RondevuConnection {
                 sdp,
             })
 
-            // Store the peer username
-            this._peerUsername = answererId
+            // Store the peer public key
+            this._peerPublicKey = answererPublicKey
 
-            this.debug(`Answer processed successfully from ${answererId}`)
-            this.emit('answer:processed', this.offerId, answererId)
+            this.debug(`Answer processed successfully from ${answererPublicKey}`)
+            this.emit('answer:processed', this.offerId, answererPublicKey)
 
             // Apply any buffered ICE candidates that arrived before the answer
             if (this.pendingIceCandidates.length > 0) {
@@ -178,10 +178,10 @@ export class OffererConnection extends RondevuConnection {
                 this.pc = newPc
                 this.dc = newDc || null
 
-                // 3. Reset answer processing flags, peer username, and pending candidates
+                // 3. Reset answer processing flags, peer public key, and pending candidates
                 this.answerProcessed = false
                 this.answerSdpFingerprint = null
-                this._peerUsername = null
+                this._peerPublicKey = null
                 this.pendingIceCandidates = []
 
                 // 4. Setup event handlers for new peer connection
@@ -278,10 +278,10 @@ export class OffererConnection extends RondevuConnection {
     }
 
     /**
-     * Get the owner username
+     * Get the owner public key
      */
-    protected getOwnerUsername(): string {
-        return this.ownerUsername
+    protected getOwnerPublicKey(): string {
+        return this.ownerPublicKey
     }
 
     /**
@@ -321,11 +321,11 @@ export class OffererConnection extends RondevuConnection {
     }
 
     /**
-     * Get the peer username (who answered this offer)
+     * Get the peer public key (who answered this offer)
      * Returns null if no answer has been processed yet
      */
-    get peerUsername(): string | null {
-        return this._peerUsername
+    get peerPublicKey(): string | null {
+        return this._peerPublicKey
     }
 
     /**

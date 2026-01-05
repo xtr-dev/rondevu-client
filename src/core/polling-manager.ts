@@ -13,7 +13,7 @@ import { RondevuAPI, IceCandidate } from '../api/client.js'
 
 export interface PollAnswerEvent {
     offerId: string
-    answererId: string
+    answererPublicKey: string
     sdp: string
     answeredAt: number
     matchedTags?: string[]
@@ -128,7 +128,7 @@ export class PollingManager extends EventEmitter<PollingManagerEvents> {
                 this.debug(`Poll: answer for ${answer.offerId}`)
                 this.emit('poll:answer', {
                     offerId: answer.offerId,
-                    answererId: answer.answererId,
+                    answererPublicKey: answer.answererPublicKey,
                     sdp: answer.sdp,
                     answeredAt: answer.answeredAt,
                     matchedTags: answer.matchedTags,

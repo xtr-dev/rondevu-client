@@ -2,9 +2,13 @@
  * Crypto adapter interface for platform-independent cryptographic operations
  */
 
-export interface Credential {
-    name: string
-    secret: string
+/**
+ * Ed25519 key pair for identity
+ * The public key IS the identity (like Ethereum addresses)
+ */
+export interface KeyPair {
+    publicKey: string // 64-char hex (32 bytes) Ed25519 public key
+    privateKey: string // 64-char hex (32 bytes) Ed25519 private key - NEVER sent to server
 }
 
 /**
@@ -13,27 +17,28 @@ export interface Credential {
  */
 export interface CryptoAdapter {
     /**
-     * Generate HMAC-SHA256 signature for message authentication
-     * @param secret - The credential secret (hex string)
+     * Generate a new Ed25519 key pair locally
+     * The public key serves as the identity
+     * @returns Key pair with public and private keys as hex strings
+     */
+    generateKeyPair(): Promise<KeyPair>
+
+    /**
+     * Sign a message using Ed25519
+     * @param privateKey - The private key (64-char hex string)
      * @param message - The message to sign
      * @returns Base64-encoded signature
      */
-    generateSignature(secret: string, message: string): Promise<string>
+    signMessage(privateKey: string, message: string): Promise<string>
 
     /**
-     * Verify HMAC-SHA256 signature
-     * @param secret - The credential secret (hex string)
+     * Verify an Ed25519 signature
+     * @param publicKey - The public key (64-char hex string)
      * @param message - The message that was signed
      * @param signature - The signature to verify (base64)
      * @returns True if signature is valid
      */
-    verifySignature(secret: string, message: string, signature: string): Promise<boolean>
-
-    /**
-     * Generate a random secret (256-bit hex string)
-     * @returns 64-character hex string
-     */
-    generateSecret(): string
+    verifySignature(publicKey: string, message: string, signature: string): Promise<boolean>
 
     /**
      * Convert hex string to bytes

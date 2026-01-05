@@ -1,12 +1,20 @@
 /**
  * Node.js Crypto adapter for Node.js environments
+ * Uses @noble/ed25519 for Ed25519 operations
  * Requires Node.js 19+ or Node.js 18 with --experimental-global-webcrypto flag
  */
 
-import { CryptoAdapter } from './adapter.js'
+import * as ed from '@noble/ed25519'
+import { CryptoAdapter, KeyPair } from './adapter.js'
+
+// Configure @noble/ed25519 to use Web Crypto API's SHA-512
+ed.hashes.sha512Async = async (message: Uint8Array): Promise<Uint8Array> => {
+    const hashBuffer = await crypto.subtle.digest('SHA-512', message as unknown as BufferSource)
+    return new Uint8Array(hashBuffer)
+}
 
 /**
- * Node.js Crypto implementation using Node.js built-in APIs
+ * Node.js Crypto implementation using Node.js built-in APIs and @noble/ed25519
  * Uses Buffer for base64 encoding and crypto.randomBytes for random generation
  *
  * Requirements:
@@ -18,11 +26,13 @@ import { CryptoAdapter } from './adapter.js'
  * import { RondevuAPI } from '@xtr-dev/rondevu-client'
  * import { NodeCryptoAdapter } from '@xtr-dev/rondevu-client/node'
  *
+ * const crypto = new NodeCryptoAdapter()
+ * const keyPair = await crypto.generateKeyPair()
+ *
  * const api = new RondevuAPI(
  *   'https://signal.example.com',
- *   'alice',
- *   { name: 'alice', secret: '...' },
- *   new NodeCryptoAdapter()
+ *   keyPair,
+ *   crypto
  * )
  * ```
  */
@@ -37,101 +47,62 @@ export class NodeCryptoAdapter implements CryptoAdapter {
     }
 
     /**
-     * Generate HMAC-SHA256 signature
+     * Generate a new Ed25519 key pair locally
      */
-    async generateSignature(secret: string, message: string): Promise<string> {
-        if (!secret || typeof secret !== 'string') {
-            throw new Error('Invalid secret: must be a non-empty string')
+    async generateKeyPair(): Promise<KeyPair> {
+        // Generate 32 random bytes for private key
+        const privateKeyBytes = this.randomBytes(32)
+        const privateKey = this.bytesToHex(privateKeyBytes)
+
+        // Derive public key from private key
+        const publicKeyBytes = await ed.getPublicKeyAsync(privateKeyBytes)
+        const publicKey = this.bytesToHex(publicKeyBytes)
+
+        return { publicKey, privateKey }
+    }
+
+    /**
+     * Sign a message using Ed25519
+     */
+    async signMessage(privateKey: string, message: string): Promise<string> {
+        if (!privateKey || typeof privateKey !== 'string') {
+            throw new Error('Invalid private key: must be a non-empty string')
         }
         if (typeof message !== 'string') {
             throw new Error('Invalid message: must be a string')
         }
-        const secretBytes = this.hexToBytes(secret)
 
-        // Import secret as HMAC key
-        const key = await crypto.subtle.importKey(
-            'raw',
-            secretBytes as BufferSource,
-            { name: 'HMAC', hash: 'SHA-256' },
-            false,
-            ['sign']
-        )
+        const privateKeyBytes = this.hexToBytes(privateKey)
 
         // Convert message to bytes
         const encoder = new TextEncoder()
         const messageBytes = encoder.encode(message)
 
-        // Generate HMAC signature
-        const signatureBytes = await crypto.subtle.sign('HMAC', key, messageBytes)
+        // Sign using Ed25519
+        const signatureBytes = await ed.signAsync(messageBytes, privateKeyBytes)
 
         // Convert to base64
-        return this.bytesToBase64(new Uint8Array(signatureBytes))
+        return this.bytesToBase64(signatureBytes)
     }
 
     /**
-     * Verify HMAC-SHA256 signature
-     * Uses constant-time comparison via Web Crypto API to prevent timing attacks
-     *
-     * @returns false for invalid signatures, throws for malformed input
-     * @throws Error if secret/signature format is invalid (not a verification failure)
+     * Verify an Ed25519 signature
      */
-    async verifySignature(secret: string, message: string, signature: string): Promise<boolean> {
-        // Validate inputs first
-        // Use generic error messages to prevent timing attacks and information leakage
-        let secretBytes: Uint8Array
-        let signatureBytes: Uint8Array
-
+    async verifySignature(publicKey: string, message: string, signature: string): Promise<boolean> {
         try {
-            secretBytes = this.hexToBytes(secret)
-        } catch (error) {
-            // Generic error message - don't leak format details
-            throw new Error('Invalid credential format')
-        }
-
-        try {
-            signatureBytes = this.base64ToBytes(signature)
-        } catch (error) {
-            // Generic error message - don't leak format details
-            throw new Error('Invalid signature format')
-        }
-
-        // Perform HMAC verification
-        try {
-            // Import secret as HMAC key for verification
-            const key = await crypto.subtle.importKey(
-                'raw',
-                secretBytes as BufferSource,
-                { name: 'HMAC', hash: 'SHA-256' },
-                false,
-                ['verify']
-            )
+            const publicKeyBytes = this.hexToBytes(publicKey)
+            const signatureBytes = this.base64ToBytes(signature)
 
             // Convert message to bytes
             const encoder = new TextEncoder()
             const messageBytes = encoder.encode(message)
 
-            // Use Web Crypto API's verify() for constant-time comparison
-            // Returns false for signature mismatch (auth failure)
-            return await crypto.subtle.verify(
-                'HMAC',
-                key,
-                signatureBytes as BufferSource,
-                messageBytes
-            )
+            // Verify using Ed25519
+            return await ed.verifyAsync(signatureBytes, messageBytes, publicKeyBytes)
         } catch (error) {
-            // System/crypto errors - unexpected failures
-            throw new Error(
-                `Signature verification error: ${error instanceof Error ? error.message : String(error)}`
-            )
+            console.error('Signature verification error:', error)
+            return false
         }
-    }
-
-    /**
-     * Generate a random secret (256-bit hex string)
-     */
-    generateSecret(): string {
-        const bytes = this.randomBytes(32) // 32 bytes = 256 bits
-        return this.bytesToHex(bytes)
     }
 
     /**

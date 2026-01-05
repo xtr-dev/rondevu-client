@@ -10,7 +10,7 @@ import { WebRTCAdapter } from '../webrtc/adapter.js'
 
 export interface AnswererOptions {
     api: RondevuAPI
-    ownerUsername: string
+    ownerPublicKey: string
     tags: string[]
     offerId: string
     offerSdp: string
@@ -25,7 +25,7 @@ export interface AnswererOptions {
  */
 export class AnswererConnection extends RondevuConnection {
     private api: RondevuAPI
-    private ownerUsername: string
+    private ownerPublicKey: string
     private tags: string[]
     private offerId: string
     private offerSdp: string
@@ -34,7 +34,7 @@ export class AnswererConnection extends RondevuConnection {
     constructor(options: AnswererOptions) {
         super(options.rtcConfig, options.config, options.webrtcAdapter)
         this.api = options.api
-        this.ownerUsername = options.ownerUsername
+        this.ownerPublicKey = options.ownerPublicKey
         this.tags = options.tags
         this.offerId = options.offerId
         this.offerSdp = options.offerSdp
@@ -114,10 +114,10 @@ export class AnswererConnection extends RondevuConnection {
     }
 
     /**
-     * Get the owner username
+     * Get the owner public key (implements abstract method)
      */
-    protected getOwnerUsername(): string {
-        return this.ownerUsername
+    protected getOwnerPublicKey(): string {
+        return this.ownerPublicKey
     }
 
     /**
@@ -128,12 +128,12 @@ export class AnswererConnection extends RondevuConnection {
     }
 
     /**
-     * Attempt to reconnect to the same user
+     * Attempt to reconnect to the same peer
      */
     protected attemptReconnect(): void {
-        this.debug(`Attempting to reconnect to ${this.ownerUsername}`)
+        this.debug(`Attempting to reconnect to ${this.ownerPublicKey}`)
 
-        // For answerer, we need to fetch a new offer from the same user
+        // For answerer, we need to fetch a new offer from the same peer
         // Clean up old connection
         if (this.pc) {
             this.pc.close()
@@ -153,18 +153,18 @@ export class AnswererConnection extends RondevuConnection {
                     throw new Error('No offers available for reconnection')
                 }
 
-                // Filter for offers from the same user
-                const userOffers = response.offers.filter(o => o.username === this.ownerUsername)
-                if (userOffers.length === 0) {
-                    throw new Error(`No offers available from ${this.ownerUsername}`)
+                // Filter for offers from the same peer
+                const peerOffers = response.offers.filter(o => o.publicKey === this.ownerPublicKey)
+                if (peerOffers.length === 0) {
+                    throw new Error(`No offers available from ${this.ownerPublicKey}`)
                 }
 
-                // Pick a random offer from the same user
-                const offer = userOffers[Math.floor(Math.random() * userOffers.length)]
+                // Pick a random offer from the same peer
+                const offer = peerOffers[Math.floor(Math.random() * peerOffers.length)]
                 this.offerId = offer.offerId
                 this.offerSdp = offer.sdp
 
-                this.debug(`Found new offer ${offer.offerId} from ${this.ownerUsername}`)
+                this.debug(`Found new offer ${offer.offerId} from ${this.ownerPublicKey}`)
 
                 // Reinitialize with new offer
                 return this.initialize()

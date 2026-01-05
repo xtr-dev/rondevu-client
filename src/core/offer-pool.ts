@@ -14,7 +14,7 @@ export type OfferFactory = (pc: RTCPeerConnection) => Promise<{
 export interface OfferPoolOptions {
     api: RondevuAPI
     tags: string[]
-    ownerUsername: string
+    ownerPublicKey: string
     maxOffers: number
     offerFactory: OfferFactory
     ttl: number
@@ -48,7 +48,7 @@ interface OfferPoolEvents {
 export class OfferPool extends EventEmitter<OfferPoolEvents> {
     private readonly api: RondevuAPI
     private tags: string[]
-    private readonly ownerUsername: string
+    private readonly ownerPublicKey: string
     private readonly maxOffers: number
     private readonly offerFactory: OfferFactory
     private readonly ttl: number
@@ -68,7 +68,7 @@ export class OfferPool extends EventEmitter<OfferPoolEvents> {
         super()
         this.api = options.api
         this.tags = options.tags
-        this.ownerUsername = options.ownerUsername
+        this.ownerPublicKey = options.ownerPublicKey
         this.webrtcAdapter = options.webrtcAdapter
         this.maxOffers = options.maxOffers
         this.offerFactory = options.offerFactory
@@ -281,7 +281,7 @@ export class OfferPool extends EventEmitter<OfferPoolEvents> {
         // Create OffererConnection instance
         const connection = new OffererConnection({
             api: this.api,
-            ownerUsername: this.ownerUsername,
+            ownerPublicKey: this.ownerPublicKey,
             offerId,
             pc,
             dc,
@@ -373,7 +373,7 @@ export class OfferPool extends EventEmitter<OfferPoolEvents> {
             }
 
             try {
-                await connection.processAnswer(data.sdp, data.answererId)
+                await connection.processAnswer(data.sdp, data.answererPublicKey)
 
                 // Create replacement offer
                 this.fillOffers()

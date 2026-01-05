@@ -1,7 +1,7 @@
 /**
  * Peer - Clean DX wrapper for peer-to-peer connections
  *
- * Provides a simple interface for connecting to a peer by tags/username,
+ * Provides a simple interface for connecting to a peer by tags/publicKey,
  * with automatic reconnection and message buffering.
  */
 
@@ -49,8 +49,8 @@ export type PeerEventName = keyof PeerEventMap
 export interface PeerOptions {
     /** Tags to match for peer discovery */
     tags: string[]
-    /** Optional: connect to specific username */
-    username?: string
+    /** Optional: connect to specific public key */
+    publicKey?: string
     /** Optional: custom RTC configuration */
     rtcConfig?: RTCConfiguration
     /** Optional: connection behavior configuration */
@@ -74,12 +74,12 @@ export interface PeerInternalOptions extends PeerOptions {
  * @example
  * ```typescript
  * const peer = await rondevu.peer({
- *   username: 'alice',
+ *   publicKey: 'abc123...',
  *   tags: ['chat']
  * })
  *
  * peer.on('open', () => {
- *   console.log('Connected to', peer.peerUsername)
+ *   console.log('Connected to', peer.peerPublicKey)
  *   peer.send('Hello!')
  * })
  *
@@ -100,7 +100,7 @@ export class Peer extends EventEmitter<PeerEventMap> {
     private connection: AnswererConnection | null = null
     private api: RondevuAPI
     private tags: string[]
-    private targetUsername?: string
+    private targetPublicKey?: string
     private iceServers: RTCIceServer[]
     private iceTransportPolicy?: RTCIceTransportPolicy
     private webrtcAdapter?: WebRTCAdapter
@@ -108,14 +108,14 @@ export class Peer extends EventEmitter<PeerEventMap> {
     private debugEnabled: boolean
 
     private _state: PeerState = 'connecting'
-    private _peerUsername: string = ''
+    private _peerPublicKey: string = ''
     private _offerId: string = ''
 
     constructor(options: PeerInternalOptions) {
         super()
         this.api = options.api
         this.tags = options.tags
-        this.targetUsername = options.username
+        this.targetPublicKey = options.publicKey
         this.iceServers = options.iceServers
         this.iceTransportPolicy = options.iceTransportPolicy
         this.webrtcAdapter = options.webrtcAdapter
@@ -129,7 +129,7 @@ export class Peer extends EventEmitter<PeerEventMap> {
     async initialize(): Promise<void> {
         this.debug('Initializing peer connection')
         this.debug(
-            `Tags: ${this.tags.join(', ')}${this.targetUsername ? `, username: ${this.targetUsername}` : ''}`
+            `Tags: ${this.tags.join(', ')}${this.targetPublicKey ? `, publicKey: ${this.targetPublicKey}` : ''}`
         )
 
         // Discover offers
@@ -142,30 +142,30 @@ export class Peer extends EventEmitter<PeerEventMap> {
             throw new Error(`No peers found for tags: ${this.tags.join(', ')}`)
         }
 
-        // Filter by username if specified
+        // Filter by publicKey if specified
         let availableOffers = result.offers
-        if (this.targetUsername) {
+        if (this.targetPublicKey) {
             availableOffers = result.offers.filter(
-                (o: TaggedOffer) => o.username === this.targetUsername
+                (o: TaggedOffer) => o.publicKey === this.targetPublicKey
             )
             if (availableOffers.length === 0) {
                 throw new Error(
-                    `No peers found for tags: ${this.tags.join(', ')} from @${this.targetUsername}`
+                    `No peers found for tags: ${this.tags.join(', ')} from ${this.targetPublicKey}`
                 )
             }
         }
 
         // Pick a random offer
         const offer = availableOffers[Math.floor(Math.random() * availableOffers.length)]
-        this._peerUsername = offer.username
+        this._peerPublicKey = offer.publicKey
         this._offerId = offer.offerId
 
-        this.debug(`Selected offer ${offer.offerId} from @${offer.username}`)
+        this.debug(`Selected offer ${offer.offerId} from ${offer.publicKey}`)
 
         // Create the underlying AnswererConnection
         this.connection = new AnswererConnection({
             api: this.api,
-            ownerUsername: offer.username,
+            ownerPublicKey: offer.publicKey,
             tags: offer.tags,
             offerId: offer.offerId,
             offerSdp: offer.sdp,
@@ -279,10 +279,10 @@ export class Peer extends EventEmitter<PeerEventMap> {
     }
 
     /**
-     * Username of the connected peer
+     * Public key of the connected peer
      */
-    get peerUsername(): string {
-        return this._peerUsername
+    get peerPublicKey(): string {
+        return this._peerPublicKey
     }
 
     /**

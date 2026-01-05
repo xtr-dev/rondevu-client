@@ -354,9 +354,9 @@ export abstract class RondevuConnection extends EventEmitter<ConnectionEventMap>
     protected abstract getApi(): any
 
     /**
-     * Get the owner username - subclasses must provide
+     * Get the owner public key - subclasses must provide
      */
-    protected abstract getOwnerUsername(): string
+    protected abstract getOwnerPublicKey(): string
 
     /**
      * Get the offer ID - subclasses must provide

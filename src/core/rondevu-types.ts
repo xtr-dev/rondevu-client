@@ -4,7 +4,7 @@
  * Contains all public interfaces and types for the Rondevu client.
  */
 
-import { Credential } from '../api/client.js'
+import { KeyPair } from '../api/client.js'
 import { CryptoAdapter } from '../crypto/adapter.js'
 import { WebRTCAdapter } from '../webrtc/adapter.js'
 import { ConnectionConfig } from '../connections/config.js'
@@ -16,10 +16,8 @@ import { IceServerPreset } from './ice-config.js'
 export interface RondevuOptions {
     /** API URL (defaults to 'https://api.ronde.vu') */
     apiUrl?: string
-    /** Pre-existing credential (will generate if not provided) */
-    credential?: Credential
-    /** Claim specific username (4-32 chars, alphanumeric + dashes + periods) */
-    username?: string
+    /** Pre-existing keypair (will generate if not provided) */
+    keyPair?: KeyPair
     /** Crypto adapter (defaults to WebCryptoAdapter) */
     cryptoAdapter?: CryptoAdapter
     /** WebRTC adapter (defaults to BrowserWebRTCAdapter, use NodeWebRTCAdapter for Node.js) */
@@ -88,8 +86,8 @@ export interface ConnectionContext {
     tags: string[]
     /** The offer ID for this connection */
     offerId: string
-    /** Username of the connected peer */
-    peerUsername: string
+    /** Public key of the connected peer */
+    peerPublicKey: string
 }
 
 /**
@@ -108,8 +106,8 @@ export interface DiscoverOptions {
 export interface DiscoveredOffer {
     /** Unique offer identifier */
     offerId: string
-    /** Username of the offer publisher */
-    username: string
+    /** Public key of the offer publisher */
+    publicKey: string
     /** Tags associated with this offer */
     tags: string[]
     /** The WebRTC offer SDP */

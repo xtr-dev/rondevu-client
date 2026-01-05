@@ -47,6 +47,7 @@
     "README.md"
   ],
   "dependencies": {
+    "@noble/ed25519": "^3.0.0",
     "eventemitter3": "^5.0.1"
   },
   "lint-staged": {

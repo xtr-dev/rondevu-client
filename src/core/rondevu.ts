@@ -1,4 +1,4 @@
-import { RondevuAPI, Credential, IceCandidate } from '../api/client.js'
+import { RondevuAPI, KeyPair, IceCandidate } from '../api/client.js'
 import { CryptoAdapter } from '../crypto/adapter.js'
 import { WebRTCAdapter } from '../webrtc/adapter.js'
 import { BrowserWebRTCAdapter } from '../webrtc/browser.js'
@@ -48,6 +48,7 @@ export type { PollAnswerEvent, PollIceEvent } from './polling-manager.js'
  * Rondevu - Complete WebRTC signaling client with durable connections
  *
  * Uses a tags-based discovery system where offers have 1+ tags for matching.
+ * Authentication uses Ed25519 public key cryptography - your public key IS your identity.
  *
  * @example
  * ```typescript
@@ -100,7 +101,7 @@ export class Rondevu extends EventEmitter {
 
     private api: RondevuAPI
     private readonly apiUrl: string
-    private credential: Credential
+    private keyPair: KeyPair
     private cryptoAdapter?: CryptoAdapter
     private webrtcAdapter: WebRTCAdapter
     private iceServers: RTCIceServer[]
@@ -117,7 +118,7 @@ export class Rondevu extends EventEmitter {
 
     private constructor(
         apiUrl: string,
-        credential: Credential,
+        keyPair: KeyPair,
         api: RondevuAPI,
         iceServers: RTCIceServer[],
         iceTransportPolicy: RTCIceTransportPolicy | undefined,
@@ -127,7 +128,7 @@ export class Rondevu extends EventEmitter {
     ) {
         super()
         this.apiUrl = apiUrl
-        this.credential = credential
+        this.keyPair = keyPair
         this.api = api
         this.iceServers = iceServers
         this.iceTransportPolicy = iceTransportPolicy
@@ -150,7 +151,7 @@ export class Rondevu extends EventEmitter {
         })
 
         this.debug('Instance created:', {
-            name: this.credential.name,
+            publicKey: this.keyPair.publicKey,
             hasIceServers: iceServers.length > 0,
             iceTransportPolicy: iceTransportPolicy || 'all',
         })
@@ -189,33 +190,31 @@ export class Rondevu extends EventEmitter {
         if (options.debug) {
             console.log('[Rondevu] Connecting:', {
                 apiUrl,
-                hasCredential: !!options.credential,
+                hasKeyPair: !!options.keyPair,
                 iceServers: iceConfig.iceServers?.length ?? 0,
                 iceTransportPolicy: iceConfig.iceTransportPolicy || 'all',
             })
         }
 
-        // Generate credential if not provided
-        let credential = options.credential
-        if (!credential) {
-            if (options.debug) console.log('[Rondevu] Generating new credentials...')
-            credential = await RondevuAPI.generateCredentials(apiUrl, {
-                name: options.username, // Will claim this username if provided
-            })
+        // Generate keypair if not provided (purely client-side, no server registration)
+        let keyPair = options.keyPair
+        if (!keyPair) {
+            if (options.debug) console.log('[Rondevu] Generating new keypair...')
+            keyPair = await RondevuAPI.generateKeyPair(options.cryptoAdapter)
             if (options.debug)
-                console.log('[Rondevu] Generated credentials, name:', credential.name)
+                console.log('[Rondevu] Generated keypair, public key:', keyPair.publicKey)
         } else {
             if (options.debug)
-                console.log('[Rondevu] Using existing credential, name:', credential.name)
+                console.log('[Rondevu] Using existing keypair, public key:', keyPair.publicKey)
         }
 
         // Create API instance
-        const api = new RondevuAPI(apiUrl, credential, options.cryptoAdapter)
+        const api = new RondevuAPI(apiUrl, keyPair, options.cryptoAdapter)
         if (options.debug) console.log('[Rondevu] Created API instance')
 
         return new Rondevu(
             apiUrl,
-            credential,
+            keyPair,
             api,
             iceConfig.iceServers || [],
             iceConfig.iceTransportPolicy,
@@ -226,28 +225,28 @@ export class Rondevu extends EventEmitter {
     }
 
     // ============================================
-    // Credential Access
+    // Identity Access
     // ============================================
 
     /**
-     * Get the current credential name
+     * Get the current public key (identity)
      */
-    getName(): string {
-        return this.credential.name
+    getPublicKey(): string {
+        return this.keyPair.publicKey
     }
 
     /**
-     * Get the full credential (name + secret)
-     * Use this to persist credentials for future sessions
+     * Get the full keypair (publicKey + privateKey)
+     * Use this to persist keypair for future sessions
      *
      * ⚠️ SECURITY WARNING:
-     * - The secret grants full access to this identity
-     * - Store credentials securely (encrypted storage, never in logs)
-     * - Never expose credentials in URLs, console output, or error messages
-     * - Treat the secret like a password or API key
+     * - The private key grants full access to this identity
+     * - Store keypair securely (encrypted storage, never in logs)
+     * - Never expose private key in URLs, console output, or error messages
+     * - Treat the private key like a password or API key
      */
-    getCredential(): Credential {
-        return { ...this.credential }
+    getKeyPair(): KeyPair {
+        return { ...this.keyPair }
     }
 
     /**
@@ -305,7 +304,7 @@ export class Rondevu extends EventEmitter {
         this.offerPool = new OfferPool({
             api: this.api,
             tags,
-            ownerUsername: this.credential.name,
+            ownerPublicKey: this.keyPair.publicKey,
             maxOffers,
             offerFactory: offerFactory || this.defaultOfferFactory.bind(this),
             ttl: ttl || Rondevu.DEFAULT_TTL_MS,
@@ -461,14 +460,14 @@ export class Rondevu extends EventEmitter {
      * // Connect to any peer matching tags
      * const peer = await rondevu.peer({ tags: ['chat'] })
      *
-     * // Connect to specific user
+     * // Connect to specific peer by public key
      * const peer = await rondevu.peer({
-     *   username: 'alice',
+     *   publicKey: 'abc123...',
      *   tags: ['chat']
      * })
      *
      * peer.on('open', () => {
-     *   console.log('Connected to', peer.peerUsername)
+     *   console.log('Connected to', peer.peerPublicKey)
      *   peer.send('Hello!')
      * })
      *
@@ -548,7 +547,7 @@ export class Rondevu extends EventEmitter {
      *
      * // Access offers
      * for (const offer of result.offers) {
-     *   console.log(offer.username, offer.tags)
+     *   console.log(offer.publicKey, offer.tags)
      * }
      * ```
      */
@@ -582,7 +581,7 @@ export class Rondevu extends EventEmitter {
     async getOfferAnswer(offerId: string): Promise<{
         sdp: string
         offerId: string
-        answererId: string
+        answererPublicKey: string
         answeredAt: number
     } | null> {
         return await this.api.getOfferAnswer(offerId)
@@ -595,7 +594,7 @@ export class Rondevu extends EventEmitter {
     async poll(since?: number): Promise<{
         answers: Array<{
             offerId: string
-            answererId: string
+            answererPublicKey: string
             sdp: string
             answeredAt: number
         }>
@@ -604,7 +603,7 @@ export class Rondevu extends EventEmitter {
             Array<{
                 candidate: RTCIceCandidateInit | null
                 role: 'offerer' | 'answerer'
-                peerId: string
+                peerPublicKey: string
                 createdAt: number
             }>
         >
