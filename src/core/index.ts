@@ -34,3 +34,4 @@ export type {
 } from './rondevu.js'
 export type { PeerState, PeerOptions } from './peer.js'
 export type { IceServerPreset } from './ice-config.js'
+export type { KeyPair } from '../crypto/adapter.js'
