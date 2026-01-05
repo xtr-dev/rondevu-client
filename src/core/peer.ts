@@ -10,6 +10,7 @@ import { RondevuAPI, DiscoverResponse, TaggedOffer } from '../api/client.js'
 import { AnswererConnection } from '../connections/answerer.js'
 import { ConnectionConfig } from '../connections/config.js'
 import { ConnectionState } from '../connections/events.js'
+import { WebRTCAdapter } from '../webrtc/adapter.js'
 
 /**
  * Simplified peer state (maps from ConnectionState)
@@ -63,6 +64,7 @@ export interface PeerInternalOptions extends PeerOptions {
     api: RondevuAPI
     iceServers: RTCIceServer[]
     iceTransportPolicy?: RTCIceTransportPolicy
+    webrtcAdapter?: WebRTCAdapter
     debug?: boolean
 }
 
@@ -101,6 +103,7 @@ export class Peer extends EventEmitter<PeerEventMap> {
     private targetUsername?: string
     private iceServers: RTCIceServer[]
     private iceTransportPolicy?: RTCIceTransportPolicy
+    private webrtcAdapter?: WebRTCAdapter
     private connectionConfig?: Partial<ConnectionConfig>
     private debugEnabled: boolean
 
@@ -115,6 +118,7 @@ export class Peer extends EventEmitter<PeerEventMap> {
         this.targetUsername = options.username
         this.iceServers = options.iceServers
         this.iceTransportPolicy = options.iceTransportPolicy
+        this.webrtcAdapter = options.webrtcAdapter
         this.connectionConfig = options.config
         this.debugEnabled = options.debug || false
     }
@@ -169,6 +173,7 @@ export class Peer extends EventEmitter<PeerEventMap> {
                 iceServers: this.iceServers,
                 iceTransportPolicy: this.iceTransportPolicy,
             },
+            webrtcAdapter: this.webrtcAdapter,
             config: {
                 ...this.connectionConfig,
                 debug: this.debugEnabled,

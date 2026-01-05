@@ -480,6 +480,7 @@ export class Rondevu extends EventEmitter {
             api: this.api,
             iceServers: this.iceServers,
             iceTransportPolicy: this.iceTransportPolicy,
+            webrtcAdapter: this.webrtcAdapter,
             debug: this.debugEnabled,
         })
 
