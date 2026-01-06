@@ -67,6 +67,7 @@ export class OfferPool extends EventEmitter<OfferPoolEvents> {
 
     // State
     private readonly activeConnections = new Map<string, OffererConnection>()
+    private readonly rotatedOfferIds = new Map<string, string>() // Maps old offerId -> new offerId for late-arriving answers
     private readonly matchedTagsByOffer = new Map<string, string[]>() // Track matchedTags from answers
     private readonly fillLock = new AsyncLock()
     private running = false
@@ -122,6 +123,8 @@ export class OfferPool extends EventEmitter<OfferPoolEvents> {
         }
 
         this.activeConnections.clear()
+        this.rotatedOfferIds.clear()
+        this.matchedTagsByOffer.clear()
     }
 
     /**
@@ -332,22 +335,43 @@ export class OfferPool extends EventEmitter<OfferPoolEvents> {
 
             this.debug(`Proceeding with rotation for offer ${currentOfferId}`)
 
+            // Track new RTCPeerConnection for cleanup if rotation fails
+            let newPcForCleanup: RTCPeerConnection | null = null
+
             try {
                 // Create new offer and rebind existing connection
                 const { newOfferId, pc, dc } = await this.createNewOfferForRotation()
+                newPcForCleanup = pc // Track for cleanup if rebind fails
 
-                // Rebind the connection to new offer
+                // Rebind the connection to new offer (this closes the old pc)
                 await connection.rebindToOffer(newOfferId, pc, dc)
+                newPcForCleanup = null // Rebind succeeded, pc is now managed by connection
 
                 // Update map: remove old offerId, add new offerId with same connection
                 this.activeConnections.delete(currentOfferId)
                 this.activeConnections.set(newOfferId, connection)
 
+                // Track rotation so late-arriving answers for old offerId can be forwarded
+                this.rotatedOfferIds.set(currentOfferId, newOfferId)
+
                 this.emit('connection:rotated', currentOfferId, newOfferId, connection)
                 this.debug(`Connection rotated: ${currentOfferId} → ${newOfferId}`)
             } catch (rotationError) {
-                // If rotation fails, fall back to destroying connection
+                // If rotation fails, clean up all RTCPeerConnections to prevent resource leak
                 this.debug(`Rotation failed for ${currentOfferId}:`, rotationError)
+
+                // Close the new pc if it was created but rebind failed
+                if (newPcForCleanup) {
+                    try {
+                        newPcForCleanup.close()
+                    } catch {
+                        // Ignore close errors
+                    }
+                }
+
+                // Close the old connection (closes its RTCPeerConnection)
+                connection.close()
+
                 this.activeConnections.delete(currentOfferId)
                 this.emit('offer:failed', currentOfferId, error)
                 this.fillOffers() // Create replacement
@@ -377,13 +401,30 @@ export class OfferPool extends EventEmitter<OfferPoolEvents> {
     async handlePollAnswer(data: PollAnswerEvent): Promise<void> {
         if (!this.running) return
 
-        const connection = this.activeConnections.get(data.offerId)
+        // Find connection - check direct mapping first, then rotated offers
+        let connection = this.activeConnections.get(data.offerId)
+        let effectiveOfferId = data.offerId
+
+        if (!connection) {
+            // Check if this is a late-arriving answer for a rotated offer
+            const newOfferId = this.resolveRotatedOfferId(data.offerId)
+            if (newOfferId && newOfferId !== data.offerId) {
+                connection = this.activeConnections.get(newOfferId)
+                effectiveOfferId = newOfferId
+                if (connection) {
+                    this.debug(
+                        `Late answer for rotated offer ${data.offerId} → forwarding to ${newOfferId}`
+                    )
+                }
+            }
+        }
+
         if (connection) {
-            this.debug(`Processing answer for offer ${data.offerId}`)
+            this.debug(`Processing answer for offer ${effectiveOfferId}`)
 
             // Store matchedTags for when connection opens
             if (data.matchedTags) {
-                this.matchedTagsByOffer.set(data.offerId, data.matchedTags)
+                this.matchedTagsByOffer.set(effectiveOfferId, data.matchedTags)
             }
 
             try {
@@ -392,7 +433,7 @@ export class OfferPool extends EventEmitter<OfferPoolEvents> {
                 // Create replacement offer
                 this.fillOffers()
             } catch (err) {
-                this.debug(`Failed to process answer for offer ${data.offerId}:`, err)
+                this.debug(`Failed to process answer for offer ${effectiveOfferId}:`, err)
             }
         }
         // Silently ignore answers for offers we don't have - they may be for other connections
@@ -405,7 +446,22 @@ export class OfferPool extends EventEmitter<OfferPoolEvents> {
     handlePollIce(data: PollIceEvent): void {
         if (!this.running) return
 
-        const connection = this.activeConnections.get(data.offerId)
+        // Find connection - check direct mapping first, then rotated offers
+        let connection = this.activeConnections.get(data.offerId)
+
+        if (!connection) {
+            // Check if this is late-arriving ICE for a rotated offer
+            const newOfferId = this.resolveRotatedOfferId(data.offerId)
+            if (newOfferId && newOfferId !== data.offerId) {
+                connection = this.activeConnections.get(newOfferId)
+                if (connection) {
+                    this.debug(
+                        `Late ICE for rotated offer ${data.offerId} → forwarding to ${newOfferId}`
+                    )
+                }
+            }
+        }
+
         if (connection) {
             this.debug(
                 `Processing ${data.candidates.length} ICE candidates for offer ${data.offerId}`
@@ -413,6 +469,27 @@ export class OfferPool extends EventEmitter<OfferPoolEvents> {
             connection.handleRemoteIceCandidates(data.candidates)
         }
         // Silently ignore ICE candidates for offers we don't have
+    }
+
+    /**
+     * Resolve an offerId through the rotation chain to find the current offerId
+     * Returns the final offerId or undefined if not found
+     */
+    private resolveRotatedOfferId(offerId: string): string | undefined {
+        let currentId = offerId
+        const visited = new Set<string>()
+
+        while (this.rotatedOfferIds.has(currentId)) {
+            if (visited.has(currentId)) {
+                // Circular reference - shouldn't happen but protect against it
+                this.debug(`Circular rotation detected for ${offerId}`)
+                return undefined
+            }
+            visited.add(currentId)
+            currentId = this.rotatedOfferIds.get(currentId)!
+        }
+
+        return currentId !== offerId ? currentId : undefined
     }
 
     /**

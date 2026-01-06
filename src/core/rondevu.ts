@@ -581,6 +581,23 @@ export class Rondevu extends EventEmitter {
         return (await this.api.discover({ tags, limit, offset })) as DiscoverResult
     }
 
+    /**
+     * Count available offers by tags
+     * Returns the count of available (unanswered, non-expired) offers for each tag
+     *
+     * @param tags - Tags to count offers for
+     * @returns Object mapping each tag to its offer count
+     *
+     * @example
+     * ```typescript
+     * const counts = await rondevu.countOffersByTags(['chat', 'video'])
+     * console.log(counts.counts)  // { chat: 5, video: 3 }
+     * ```
+     */
+    async countOffersByTags(tags: string[]): Promise<{ counts: Record<string, number> }> {
+        return await this.api.countOffersByTags({ tags })
+    }
+
     // ============================================
     // WebRTC Signaling
     // ============================================

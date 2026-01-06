@@ -27,6 +27,14 @@ export interface DiscoverRequest {
     offset?: number
 }
 
+export interface CountOffersByTagsRequest {
+    tags: string[]
+}
+
+export interface CountOffersByTagsResponse {
+    counts: Record<string, number>
+}
+
 export interface TaggedOffer {
     offerId: string
     publicKey: string
@@ -327,6 +335,23 @@ export class RondevuAPI {
                 tags: request.tags,
                 limit: request.limit,
                 offset: request.offset,
+            },
+        }
+        const authHeaders = await this.generateAuthHeaders(rpcRequest)
+        return await this.rpc(rpcRequest, authHeaders)
+    }
+
+    /**
+     * Count available offers by tags
+     * Returns the count of available (unanswered, non-expired) offers for each tag
+     * @param request - Request with tags to count
+     * @returns Object mapping each tag to its offer count
+     */
+    async countOffersByTags(request: CountOffersByTagsRequest): Promise<CountOffersByTagsResponse> {
+        const rpcRequest: RpcRequest = {
+            method: 'countOffersByTags',
+            params: {
+                tags: request.tags,
             },
         }
         const authHeaders = await this.generateAuthHeaders(rpcRequest)
