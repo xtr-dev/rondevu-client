@@ -1,5 +1,6 @@
 import { RondevuAPI, KeyPair, IceCandidate } from '../api/client.js'
 import { CryptoAdapter } from '../crypto/adapter.js'
+import { WebCryptoAdapter } from '../crypto/web.js'
 import { WebRTCAdapter } from '../webrtc/adapter.js'
 import { BrowserWebRTCAdapter } from '../webrtc/browser.js'
 import { EventEmitter } from 'eventemitter3'
@@ -196,11 +197,14 @@ export class Rondevu extends EventEmitter {
             })
         }
 
+        // Ensure crypto adapter is available (default to WebCryptoAdapter for browser)
+        const cryptoAdapter = options.cryptoAdapter || new WebCryptoAdapter()
+
         // Generate keypair if not provided (purely client-side, no server registration)
         let keyPair = options.keyPair
         if (!keyPair) {
             if (options.debug) console.log('[Rondevu] Generating new keypair...')
-            keyPair = await RondevuAPI.generateKeyPair(options.cryptoAdapter)
+            keyPair = await cryptoAdapter.generateKeyPair()
             if (options.debug)
                 console.log('[Rondevu] Generated keypair, public key:', keyPair.publicKey)
         } else {
@@ -209,7 +213,7 @@ export class Rondevu extends EventEmitter {
         }
 
         // Create API instance
-        const api = new RondevuAPI(apiUrl, keyPair, options.cryptoAdapter)
+        const api = new RondevuAPI(apiUrl, keyPair, cryptoAdapter)
         if (options.debug) console.log('[Rondevu] Created API instance')
 
         return new Rondevu(
@@ -219,7 +223,7 @@ export class Rondevu extends EventEmitter {
             iceConfig.iceServers || [],
             iceConfig.iceTransportPolicy,
             webrtcAdapter,
-            options.cryptoAdapter,
+            cryptoAdapter,
             options.debug || false
         )
     }
@@ -255,6 +259,17 @@ export class Rondevu extends EventEmitter {
      */
     getWebRTCAdapter(): WebRTCAdapter {
         return this.webrtcAdapter
+    }
+
+    /**
+     * Get the crypto adapter for signing/verification operations
+     * Used for meta.json signing and other crypto operations
+     */
+    getCryptoAdapter(): CryptoAdapter {
+        if (!this.cryptoAdapter) {
+            throw new Error('Crypto adapter not available')
+        }
+        return this.cryptoAdapter
     }
 
     // ============================================
@@ -293,7 +308,15 @@ export class Rondevu extends EventEmitter {
      * ```
      */
     async offer(options: OfferOptions): Promise<OfferHandle> {
-        const { tags, maxOffers, offerFactory, ttl, connectionConfig, autoStart = true } = options
+        const {
+            tags,
+            maxOffers,
+            offerFactory,
+            ttl,
+            connectionConfig,
+            autoStart = true,
+            offerCreationThrottleMs,
+        } = options
 
         this.currentTags = tags
         this.connectionConfig = connectionConfig
@@ -313,6 +336,7 @@ export class Rondevu extends EventEmitter {
             webrtcAdapter: this.webrtcAdapter,
             connectionConfig,
             debugEnabled: this.debugEnabled,
+            offerCreationThrottleMs,
         })
 
         // Forward events from OfferPool

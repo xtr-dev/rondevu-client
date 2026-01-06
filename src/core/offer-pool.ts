@@ -23,6 +23,12 @@ export interface OfferPoolOptions {
     webrtcAdapter: WebRTCAdapter
     connectionConfig?: Partial<ConnectionConfig>
     debugEnabled?: boolean
+    /**
+     * Delay in milliseconds between creating each offer during pool filling.
+     * Helps avoid rate limiting when creating multiple offers.
+     * Default: 100ms
+     */
+    offerCreationThrottleMs?: number
 }
 
 interface OfferPoolEvents {
@@ -57,6 +63,7 @@ export class OfferPool extends EventEmitter<OfferPoolEvents> {
     private readonly webrtcAdapter: WebRTCAdapter
     private readonly connectionConfig?: Partial<ConnectionConfig>
     private readonly debugEnabled: boolean
+    private readonly offerCreationThrottleMs: number
 
     // State
     private readonly activeConnections = new Map<string, OffererConnection>()
@@ -77,6 +84,7 @@ export class OfferPool extends EventEmitter<OfferPoolEvents> {
         this.iceTransportPolicy = options.iceTransportPolicy
         this.connectionConfig = options.connectionConfig
         this.debugEnabled = options.debugEnabled || false
+        this.offerCreationThrottleMs = options.offerCreationThrottleMs ?? 100
     }
 
     /**
@@ -183,6 +191,12 @@ export class OfferPool extends EventEmitter<OfferPoolEvents> {
             for (let i = 0; i < needed; i++) {
                 try {
                     await this.createOffer()
+                    // Throttle between offer creations to avoid rate limiting
+                    if (i < needed - 1 && this.offerCreationThrottleMs > 0) {
+                        await new Promise(resolve =>
+                            setTimeout(resolve, this.offerCreationThrottleMs)
+                        )
+                    }
                 } catch (err) {
                     console.error('[OfferPool] Failed to create offer:', err)
                 }

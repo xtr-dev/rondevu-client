@@ -64,6 +64,8 @@ export interface OfferOptions {
     connectionConfig?: Partial<ConnectionConfig>
     /** Auto-start filling offers (default: true). Set to false to manually call startFilling() */
     autoStart?: boolean
+    /** Delay in ms between creating each offer during pool filling (default: 100). Helps avoid rate limiting. */
+    offerCreationThrottleMs?: number
 }
 
 /**
