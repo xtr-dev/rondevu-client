@@ -7,7 +7,7 @@
  * Advanced options use sensible defaults.
  */
 export interface ConnectionOptions {
-    /** Maximum time to wait for connection (ms). Default: 30000 */
+    /** Maximum time to wait for connection (ms). Default: 10000 */
     timeout?: number
     /** Enable automatic reconnection on failures. Default: true */
     reconnect?: boolean
@@ -52,7 +52,7 @@ export interface ConnectionConfig {
 
 export const DEFAULT_CONNECTION_CONFIG: ConnectionConfig = {
     // Timeouts
-    connectionTimeout: 30000, // 30 seconds
+    connectionTimeout: 10000, // 10 seconds
     iceGatheringTimeout: 10000, // 10 seconds
 
     // Reconnection
