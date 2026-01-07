@@ -586,16 +586,23 @@ export class Rondevu extends EventEmitter {
      * Returns the count of available (unanswered, non-expired) offers for each tag
      *
      * @param tags - Tags to count offers for
-     * @returns Object mapping each tag to its offer count
+     * @param unique - If true, count unique public keys instead of total offers
+     * @returns Object mapping each tag to its count
      *
      * @example
      * ```typescript
      * const counts = await rondevu.countOffersByTags(['chat', 'video'])
      * console.log(counts.counts)  // { chat: 5, video: 3 }
+     *
+     * // Count unique peers instead of total offers
+     * const uniquePeers = await rondevu.countOffersByTags(['chat'], true)
      * ```
      */
-    async countOffersByTags(tags: string[]): Promise<{ counts: Record<string, number> }> {
-        return await this.api.countOffersByTags({ tags })
+    async countOffersByTags(
+        tags: string[],
+        unique?: boolean
+    ): Promise<{ counts: Record<string, number> }> {
+        return await this.api.countOffersByTags({ tags, unique })
     }
 
     // ============================================

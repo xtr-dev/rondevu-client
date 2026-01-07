@@ -69,6 +69,7 @@ export class PollingManager extends EventEmitter<PollingManagerEvents> {
             return
         }
 
+        console.log('[PollingManager] Starting polling manager')
         this.debug('Starting polling manager')
         this.running = true
 
@@ -122,6 +123,16 @@ export class PollingManager extends EventEmitter<PollingManagerEvents> {
 
         try {
             const result = await this.api.poll(this.lastPollTimestamp)
+
+            // Log poll results for debugging (always log to help diagnose issues)
+            const iceCount = Object.values(result.iceCandidates).reduce(
+                (sum, candidates) => sum + (candidates as unknown[]).length,
+                0
+            )
+            // Always log poll results to help diagnose connection issues
+            console.log(
+                `[PollingManager] Poll: ${result.answers.length} answers, ${iceCount} ICE (since: ${this.lastPollTimestamp})`
+            )
 
             // Emit answer events
             for (const answer of result.answers) {

@@ -156,6 +156,9 @@ export abstract class RondevuConnection extends EventEmitter<ConnectionEventMap>
                 if (this.state === ConnectionState.SIGNALING) {
                     this.transitionTo(ConnectionState.CHECKING, 'ICE checking started')
                 }
+                // ICE is progressing - clear the connection timeout to give ICE time to complete
+                // The timeout was for signaling, ICE checking shows progress is being made
+                this.clearConnectionTimeout()
                 // Note: ICE candidate polling is handled by PollingManager
                 // Candidates are received via handleRemoteIceCandidates()
                 break

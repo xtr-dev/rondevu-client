@@ -29,6 +29,7 @@ export interface DiscoverRequest {
 
 export interface CountOffersByTagsRequest {
     tags: string[]
+    unique?: boolean
 }
 
 export interface CountOffersByTagsResponse {
@@ -344,14 +345,15 @@ export class RondevuAPI {
     /**
      * Count available offers by tags
      * Returns the count of available (unanswered, non-expired) offers for each tag
-     * @param request - Request with tags to count
-     * @returns Object mapping each tag to its offer count
+     * @param request - Request with tags to count and optional unique flag
+     * @returns Object mapping each tag to its count
      */
     async countOffersByTags(request: CountOffersByTagsRequest): Promise<CountOffersByTagsResponse> {
         const rpcRequest: RpcRequest = {
             method: 'countOffersByTags',
             params: {
                 tags: request.tags,
+                ...(request.unique !== undefined && { unique: request.unique }),
             },
         }
         const authHeaders = await this.generateAuthHeaders(rpcRequest)
