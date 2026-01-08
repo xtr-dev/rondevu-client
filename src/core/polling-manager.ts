@@ -124,15 +124,16 @@ export class PollingManager extends EventEmitter<PollingManagerEvents> {
         try {
             const result = await this.api.poll(this.lastPollTimestamp)
 
-            // Log poll results for debugging (always log to help diagnose issues)
+            // Log poll results for debugging (only when there are results)
             const iceCount = Object.values(result.iceCandidates).reduce(
                 (sum, candidates) => sum + (candidates as unknown[]).length,
                 0
             )
-            // Always log poll results to help diagnose connection issues
-            console.log(
-                `[PollingManager] Poll: ${result.answers.length} answers, ${iceCount} ICE (since: ${this.lastPollTimestamp})`
-            )
+            if (result.answers.length > 0 || iceCount > 0) {
+                console.log(
+                    `[PollingManager] Poll: ${result.answers.length} answers, ${iceCount} ICE (since: ${this.lastPollTimestamp})`
+                )
+            }
 
             // Emit answer events
             for (const answer of result.answers) {
