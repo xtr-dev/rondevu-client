@@ -13,7 +13,7 @@
     "lint:fix": "eslint src test --ext .ts,.tsx,.js --fix",
     "format": "prettier --write \"src/**/*.{ts,tsx,js}\" \"test/**/*.{ts,tsx,js}\"",
     "prepublishOnly": "npm run build",
-    "prepare": "husky"
+    "prepare": "npm run build && husky || true"
   },
   "keywords": [
     "webrtc",
