@@ -372,6 +372,20 @@ export class RondevuAPI {
         return await this.rpc(request, authHeaders)
     }
 
+    /**
+     * Update tags for all offers owned by this identity
+     * @param tags New tags to set on all offers
+     * @returns Number of offers updated
+     */
+    async updateOfferTags(tags: string[]): Promise<{ success: boolean; count: number }> {
+        const request: RpcRequest = {
+            method: 'updateOfferTags',
+            params: { tags },
+        }
+        const authHeaders = await this.generateAuthHeaders(request)
+        return await this.rpc(request, authHeaders)
+    }
+
     // ============================================
     // WebRTC Signaling
     // ============================================

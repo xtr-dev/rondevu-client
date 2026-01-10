@@ -135,13 +135,24 @@ export class OfferPool extends EventEmitter<OfferPoolEvents> {
     }
 
     /**
-     * Update tags for new offers
-     * Existing offers keep their old tags until they expire/rotate
-     * New offers created during fill will use the updated tags
+     * Update tags for all offers (local and server-side)
+     * Updates existing offers on the server immediately for discoverability
+     * New offers created during fill will also use the updated tags
      */
     updateTags(newTags: string[]): void {
         this.debug(`Updating tags: ${newTags.join(', ')}`)
         this.tags = newTags
+
+        // Update tags on existing offers via server API
+        // Fire and forget - errors are logged but don't block
+        this.api
+            .updateOfferTags(newTags)
+            .then(result => {
+                this.debug(`Server updated ${result.count} offers with new tags`)
+            })
+            .catch(err => {
+                this.debug('Failed to update offer tags on server:', err)
+            })
     }
 
     /**
