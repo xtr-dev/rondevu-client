@@ -46,6 +46,11 @@ export abstract class RondevuConnection extends EventEmitter<ConnectionEventMap>
     protected answerProcessed = false
     protected answerSdpFingerprint: string | null = null
 
+    // ICE candidate buffering for batched sending
+    protected iceCandidateBuffer: RTCIceCandidate[] = []
+    protected iceCandidateFlushTimer: ReturnType<typeof setTimeout> | null = null
+    protected static readonly ICE_BUFFER_DELAY_MS = 20 // Buffer for 20ms before sending
+
     constructor(
         protected rtcConfig?: RTCConfiguration,
         userConfig?: Partial<ConnectionConfig>,
@@ -133,12 +138,50 @@ export abstract class RondevuConnection extends EventEmitter<ConnectionEventMap>
 
     /**
      * Handle local ICE candidate generation
+     * Buffers candidates for batched sending to reduce server requests
      */
     protected handleIceCandidate(event: RTCPeerConnectionIceEvent): void {
         this.emit('ice:candidate:local', event.candidate)
         if (event.candidate) {
-            this.onLocalIceCandidate(event.candidate)
+            this.bufferIceCandidate(event.candidate)
+        } else {
+            // null candidate means ICE gathering complete - flush any remaining
+            this.flushIceCandidates()
         }
+    }
+
+    /**
+     * Buffer an ICE candidate for batched sending
+     */
+    protected bufferIceCandidate(candidate: RTCIceCandidate): void {
+        this.iceCandidateBuffer.push(candidate)
+
+        // Reset flush timer
+        if (this.iceCandidateFlushTimer) {
+            clearTimeout(this.iceCandidateFlushTimer)
+        }
+
+        this.iceCandidateFlushTimer = setTimeout(() => {
+            this.flushIceCandidates()
+        }, RondevuConnection.ICE_BUFFER_DELAY_MS)
+    }
+
+    /**
+     * Flush buffered ICE candidates to the server
+     */
+    protected flushIceCandidates(): void {
+        if (this.iceCandidateFlushTimer) {
+            clearTimeout(this.iceCandidateFlushTimer)
+            this.iceCandidateFlushTimer = null
+        }
+
+        if (this.iceCandidateBuffer.length === 0) return
+
+        const candidates = [...this.iceCandidateBuffer]
+        this.iceCandidateBuffer = []
+
+        this.debug(`Flushing ${candidates.length} buffered ICE candidates`)
+        this.sendBufferedIceCandidates(candidates)
     }
 
     /**
@@ -608,6 +651,13 @@ export abstract class RondevuConnection extends EventEmitter<ConnectionEventMap>
         // Stop ICE polling
         this.stopIcePolling()
 
+        // Clear ICE candidate buffer
+        if (this.iceCandidateFlushTimer) {
+            clearTimeout(this.iceCandidateFlushTimer)
+            this.iceCandidateFlushTimer = null
+        }
+        this.iceCandidateBuffer = []
+
         // Close data channel
         if (this.dc) {
             this.dc.onopen = null
@@ -652,6 +702,6 @@ export abstract class RondevuConnection extends EventEmitter<ConnectionEventMap>
     }
 
     // Abstract methods to be implemented by subclasses
-    protected abstract onLocalIceCandidate(candidate: RTCIceCandidate): void
+    protected abstract sendBufferedIceCandidates(candidates: RTCIceCandidate[]): void
     protected abstract attemptReconnect(): void
 }

@@ -86,24 +86,24 @@ export class AnswererConnection extends RondevuConnection {
     }
 
     /**
-     * Handle local ICE candidate generation
+     * Send buffered ICE candidates to the server in a single batch
      */
-    protected onLocalIceCandidate(candidate: RTCIceCandidate): void {
-        this.debug('Generated local ICE candidate')
+    protected sendBufferedIceCandidates(candidates: RTCIceCandidate[]): void {
+        if (candidates.length === 0) return
+
+        this.debug(`Sending ${candidates.length} ICE candidates in batch`)
 
         // For answerer, we add ICE candidates to the offer
         // The server will make them available for the offerer to poll
-        this.api
-            .addOfferIceCandidates(this.offerId, [
-                {
-                    candidate: candidate.candidate,
-                    sdpMLineIndex: candidate.sdpMLineIndex,
-                    sdpMid: candidate.sdpMid,
-                },
-            ])
-            .catch(error => {
-                this.debug('Failed to send ICE candidate:', error)
-            })
+        const apiCandidates = candidates.map(c => ({
+            candidate: c.candidate,
+            sdpMLineIndex: c.sdpMLineIndex,
+            sdpMid: c.sdpMid,
+        }))
+
+        this.api.addOfferIceCandidates(this.offerId, apiCandidates).catch(error => {
+            this.debug('Failed to send ICE candidates:', error)
+        })
     }
 
     /**
