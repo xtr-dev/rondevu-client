@@ -55,6 +55,12 @@ export interface PeerOptions {
     rtcConfig?: RTCConfiguration
     /** Optional: connection behavior configuration */
     config?: Partial<ConnectionConfig>
+    /**
+     * Optional callback invoked when RTCPeerConnection is created.
+     * Use this to create negotiated data channels that must exist
+     * before the connection opens (e.g., control channels).
+     */
+    onPeerConnectionCreated?: (pc: RTCPeerConnection) => void
 }
 
 /**
@@ -106,6 +112,7 @@ export class Peer extends EventEmitter<PeerEventMap> {
     private webrtcAdapter?: WebRTCAdapter
     private connectionConfig?: Partial<ConnectionConfig>
     private debugEnabled: boolean
+    private onPeerConnectionCreated?: (pc: RTCPeerConnection) => void
 
     private _state: PeerState = 'connecting'
     private _peerPublicKey: string = ''
@@ -121,6 +128,7 @@ export class Peer extends EventEmitter<PeerEventMap> {
         this.webrtcAdapter = options.webrtcAdapter
         this.connectionConfig = options.config
         this.debugEnabled = options.debug || false
+        this.onPeerConnectionCreated = options.onPeerConnectionCreated
     }
 
     /**
@@ -162,6 +170,21 @@ export class Peer extends EventEmitter<PeerEventMap> {
 
         this.debug(`Selected offer ${offer.offerId} from ${offer.publicKey}`)
 
+        // Find which of our search tags actually exist on the offer (case-insensitive matching)
+        // This handles case where search tag and offer tag have different case
+        const offerTagsLower = offer.tags.map((t: string) => t.toLowerCase())
+        const actualMatchedTags = this.tags
+            .filter(searchTag => offerTagsLower.includes(searchTag.toLowerCase()))
+            .map(searchTag => {
+                // Use the actual tag from the offer (preserves original case)
+                const idx = offerTagsLower.indexOf(searchTag.toLowerCase())
+                return offer.tags[idx]
+            })
+
+        this.debug(
+            `Matched tags: ${actualMatchedTags.join(', ')} (from search: ${this.tags.join(', ')})`
+        )
+
         // Create the underlying AnswererConnection
         this.connection = new AnswererConnection({
             api: this.api,
@@ -178,7 +201,8 @@ export class Peer extends EventEmitter<PeerEventMap> {
                 ...this.connectionConfig,
                 debug: this.debugEnabled,
             },
-            matchedTags: this.tags, // Pass the tags we used to discover this offer
+            matchedTags: actualMatchedTags.length > 0 ? actualMatchedTags : undefined,
+            onPeerConnectionCreated: this.onPeerConnectionCreated,
         })
 
         // Wire up events

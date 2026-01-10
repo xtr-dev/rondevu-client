@@ -18,6 +18,8 @@ export interface AnswererOptions {
     webrtcAdapter?: WebRTCAdapter // Optional, defaults to BrowserWebRTCAdapter
     config?: Partial<ConnectionConfig>
     matchedTags?: string[] // Tags that were used to discover this offer
+    /** Callback invoked when RTCPeerConnection is created, before signaling starts */
+    onPeerConnectionCreated?: (pc: RTCPeerConnection) => void
 }
 
 /**
@@ -30,6 +32,7 @@ export class AnswererConnection extends RondevuConnection {
     private offerId: string
     private offerSdp: string
     private matchedTags?: string[]
+    private onPeerConnectionCreated?: (pc: RTCPeerConnection) => void
 
     constructor(options: AnswererOptions) {
         super(options.rtcConfig, options.config, options.webrtcAdapter)
@@ -39,6 +42,7 @@ export class AnswererConnection extends RondevuConnection {
         this.offerId = options.offerId
         this.offerSdp = options.offerSdp
         this.matchedTags = options.matchedTags
+        this.onPeerConnectionCreated = options.onPeerConnectionCreated
     }
 
     /**
@@ -50,6 +54,12 @@ export class AnswererConnection extends RondevuConnection {
         // Create peer connection
         this.createPeerConnection()
         if (!this.pc) throw new Error('Peer connection not created')
+
+        // Call the callback to allow creating negotiated data channels
+        // This must happen BEFORE signaling starts so channels exist on both sides
+        if (this.onPeerConnectionCreated) {
+            this.onPeerConnectionCreated(this.pc)
+        }
 
         // Setup ondatachannel handler BEFORE setting remote description
         // This is critical to avoid race conditions
