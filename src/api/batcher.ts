@@ -1,16 +1,33 @@
 /**
  * RPC Request Batcher with throttling
  *
- * Collects RPC requests over a short time window and sends them efficiently.
- *
- * Due to server authentication design (signature covers method+params),
- * authenticated requests are sent individually while unauthenticated
- * requests can be truly batched together.
+ * Collects RPC requests over a short time window and sends them in a single
+ * HTTP request. Each request includes its own auth credentials in the JSON body,
+ * allowing true batching of authenticated requests.
  */
 
 export interface RpcRequest {
     method: string
     params?: any
+}
+
+/**
+ * Per-request authentication credentials
+ */
+export interface RequestAuth {
+    publicKey: string
+    timestamp: number
+    nonce: string
+    signature: string
+}
+
+/**
+ * Wire format for requests sent to server
+ */
+interface WireRequest {
+    method: string
+    params?: any
+    auth?: RequestAuth
 }
 
 export interface RpcResponse {
@@ -23,19 +40,23 @@ export interface RpcResponse {
 export interface BatcherOptions {
     /** Delay in ms before flushing queued requests (default: 10) */
     delay?: number
-    /** Maximum batch size for unauthenticated requests (default: 50) */
+    /** Maximum batch size (default: 50) */
     maxBatchSize?: number
 }
 
 interface QueuedRequest {
     request: RpcRequest
-    authHeaders: Record<string, string> | null
+    auth: RequestAuth | null
     resolve: (value: any) => void
     reject: (error: Error) => void
 }
 
 /**
  * RpcBatcher - Batches RPC requests with throttling
+ *
+ * All requests (authenticated and unauthenticated) are batched together
+ * into a single HTTP request. Auth credentials are included per-request
+ * in the JSON body.
  *
  * @example
  * ```typescript
@@ -44,10 +65,10 @@ interface QueuedRequest {
  *   maxBatchSize: 50
  * })
  *
- * // Requests made within the delay window are batched
+ * // Requests made within the delay window are batched into ONE HTTP call
  * const [result1, result2] = await Promise.all([
- *   batcher.add({ method: 'getOffer', params: {...} }, null),
- *   batcher.add({ method: 'getOffer', params: {...} }, null)
+ *   batcher.add({ method: 'publish', params: {...} }, auth1),
+ *   batcher.add({ method: 'discover', params: {...} }, auth2)
  * ])
  * ```
  */
@@ -68,12 +89,12 @@ export class RpcBatcher {
     /**
      * Add a request to the batch queue
      * @param request - The RPC request
-     * @param authHeaders - Auth headers for authenticated requests, null for unauthenticated
+     * @param auth - Per-request auth credentials, null for unauthenticated
      * @returns Promise that resolves with the request result
      */
-    add(request: RpcRequest, authHeaders: Record<string, string> | null): Promise<any> {
+    add(request: RpcRequest, auth: RequestAuth | null): Promise<any> {
         return new Promise((resolve, reject) => {
-            this.queue.push({ request, authHeaders, resolve, reject })
+            this.queue.push({ request, auth, resolve, reject })
             this.scheduleFlush()
         })
     }
@@ -99,70 +120,37 @@ export class RpcBatcher {
         const items = this.queue
         this.queue = []
 
-        // Separate authenticated vs unauthenticated requests
-        const unauthenticated: QueuedRequest[] = []
-        const authenticated: QueuedRequest[] = []
-
-        for (const item of items) {
-            if (item.authHeaders) {
-                authenticated.push(item)
-            } else {
-                unauthenticated.push(item)
-            }
-        }
-
-        // Process unauthenticated requests in batches
-        await this.processUnauthenticatedBatches(unauthenticated)
-
-        // Process authenticated requests individually (each needs unique signature)
-        await this.processAuthenticatedRequests(authenticated)
-    }
-
-    /**
-     * Process unauthenticated requests in batches
-     */
-    private async processUnauthenticatedBatches(items: QueuedRequest[]): Promise<void> {
-        if (items.length === 0) return
-
-        // Split into chunks of maxBatchSize
+        // Split into chunks of maxBatchSize and send each chunk
         for (let i = 0; i < items.length; i += this.maxBatchSize) {
             const chunk = items.slice(i, i + this.maxBatchSize)
-            await this.sendBatch(chunk, null)
+            await this.sendBatch(chunk)
         }
     }
 
     /**
-     * Process authenticated requests individually
-     * Each authenticated request needs its own HTTP call because
-     * the signature covers the specific method+params
+     * Send a batch of requests in a single HTTP call
+     * Each request includes its own auth credentials in the JSON body
      */
-    private async processAuthenticatedRequests(items: QueuedRequest[]): Promise<void> {
-        // Send all authenticated requests in parallel, each as its own batch of 1
-        await Promise.all(items.map(item => this.sendBatch([item], item.authHeaders)))
-    }
-
-    /**
-     * Send a batch of requests
-     */
-    private async sendBatch(
-        items: QueuedRequest[],
-        authHeaders: Record<string, string> | null
-    ): Promise<void> {
+    private async sendBatch(items: QueuedRequest[]): Promise<void> {
         try {
-            const requests = items.map(item => item.request)
-
-            const headers: Record<string, string> = {
-                'Content-Type': 'application/json',
-            }
-
-            if (authHeaders) {
-                Object.assign(headers, authHeaders)
-            }
+            // Build wire requests with per-request auth
+            const wireRequests: WireRequest[] = items.map(item => {
+                const wireReq: WireRequest = {
+                    method: item.request.method,
+                    params: item.request.params,
+                }
+                if (item.auth) {
+                    wireReq.auth = item.auth
+                }
+                return wireReq
+            })
 
             const response = await fetch(`${this.baseUrl}/rpc`, {
                 method: 'POST',
-                headers,
-                body: JSON.stringify(requests), // Always send as array
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(wireRequests),
             })
 
             if (!response.ok) {

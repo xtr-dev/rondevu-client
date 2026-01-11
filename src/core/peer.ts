@@ -170,16 +170,8 @@ export class Peer extends EventEmitter<PeerEventMap> {
 
         this.debug(`Selected offer ${offer.offerId} from ${offer.publicKey}`)
 
-        // Find which of our search tags actually exist on the offer (case-insensitive matching)
-        // This handles case where search tag and offer tag have different case
-        const offerTagsLower = offer.tags.map((t: string) => t.toLowerCase())
-        const actualMatchedTags = this.tags
-            .filter(searchTag => offerTagsLower.includes(searchTag.toLowerCase()))
-            .map(searchTag => {
-                // Use the actual tag from the offer (preserves original case)
-                const idx = offerTagsLower.indexOf(searchTag.toLowerCase())
-                return offer.tags[idx]
-            })
+        // Find which of our search tags actually exist on the offer (exact match)
+        const actualMatchedTags = this.tags.filter(searchTag => offer.tags.includes(searchTag))
 
         this.debug(
             `Matched tags: ${actualMatchedTags.join(', ')} (from search: ${this.tags.join(', ')})`

@@ -4,10 +4,10 @@
 
 import { CryptoAdapter, KeyPair } from '../crypto/adapter.js'
 import { WebCryptoAdapter } from '../crypto/web.js'
-import { RpcBatcher, BatcherOptions } from './batcher.js'
+import { RpcBatcher, BatcherOptions, RequestAuth } from './batcher.js'
 
 export type { KeyPair } from '../crypto/adapter.js'
-export type { BatcherOptions } from './batcher.js'
+export type { BatcherOptions, RequestAuth } from './batcher.js'
 
 export interface OfferRequest {
     sdp: string
@@ -250,7 +250,7 @@ export class RondevuAPI {
     }
 
     /**
-     * Generate authentication headers for RPC request
+     * Generate per-request authentication credentials
      * Uses Ed25519 signature with nonce for replay protection
      *
      * Security notes:
@@ -264,7 +264,7 @@ export class RondevuAPI {
      *   - Each nonce can only be used once within the timestamp validity window
      *   - Server maintains nonce cache with expiration matching timestamp window
      */
-    private async generateAuthHeaders(request: RpcRequest): Promise<Record<string, string>> {
+    private async generateAuth(request: RpcRequest): Promise<RequestAuth> {
         const timestamp = Date.now()
         const nonce = this.generateNonce()
 
@@ -273,19 +273,20 @@ export class RondevuAPI {
         const signature = await this.crypto.signMessage(this.keyPair.privateKey, message)
 
         return {
-            'X-PublicKey': this.keyPair.publicKey,
-            'X-Timestamp': timestamp.toString(),
-            'X-Nonce': nonce,
-            'X-Signature': signature,
+            publicKey: this.keyPair.publicKey,
+            timestamp,
+            nonce,
+            signature,
         }
     }
 
     /**
      * Execute RPC call via batcher
      * Requests are batched with throttling for efficiency
+     * All requests within the batch delay window are sent in a single HTTP call
      */
-    private async rpc(request: RpcRequest, authHeaders: Record<string, string>): Promise<any> {
-        return this.batcher.add(request, authHeaders)
+    private async rpc(request: RpcRequest, auth: RequestAuth): Promise<any> {
+        return this.batcher.add(request, auth)
     }
 
     // ============================================
@@ -320,8 +321,8 @@ export class RondevuAPI {
                 ttl: request.ttl,
             },
         }
-        const authHeaders = await this.generateAuthHeaders(rpcRequest)
-        return await this.rpc(rpcRequest, authHeaders)
+        const auth = await this.generateAuth(rpcRequest)
+        return await this.rpc(rpcRequest, auth)
     }
 
     /**
@@ -338,8 +339,8 @@ export class RondevuAPI {
                 offset: request.offset,
             },
         }
-        const authHeaders = await this.generateAuthHeaders(rpcRequest)
-        return await this.rpc(rpcRequest, authHeaders)
+        const auth = await this.generateAuth(rpcRequest)
+        return await this.rpc(rpcRequest, auth)
     }
 
     /**
@@ -356,8 +357,8 @@ export class RondevuAPI {
                 ...(request.unique !== undefined && { unique: request.unique }),
             },
         }
-        const authHeaders = await this.generateAuthHeaders(rpcRequest)
-        return await this.rpc(rpcRequest, authHeaders)
+        const auth = await this.generateAuth(rpcRequest)
+        return await this.rpc(rpcRequest, auth)
     }
 
     /**
@@ -368,8 +369,8 @@ export class RondevuAPI {
             method: 'deleteOffer',
             params: { offerId },
         }
-        const authHeaders = await this.generateAuthHeaders(request)
-        return await this.rpc(request, authHeaders)
+        const auth = await this.generateAuth(request)
+        return await this.rpc(request, auth)
     }
 
     /**
@@ -382,8 +383,8 @@ export class RondevuAPI {
             method: 'updateOfferTags',
             params: { tags },
         }
-        const authHeaders = await this.generateAuthHeaders(request)
-        return await this.rpc(request, authHeaders)
+        const auth = await this.generateAuth(request)
+        return await this.rpc(request, auth)
     }
 
     // ============================================
@@ -401,8 +402,8 @@ export class RondevuAPI {
             method: 'answerOffer',
             params: { offerId, sdp, matchedTags },
         }
-        const authHeaders = await this.generateAuthHeaders(request)
-        await this.rpc(request, authHeaders)
+        const auth = await this.generateAuth(request)
+        await this.rpc(request, auth)
     }
 
     /**
@@ -420,8 +421,8 @@ export class RondevuAPI {
                 method: 'getOfferAnswer',
                 params: { offerId },
             }
-            const authHeaders = await this.generateAuthHeaders(request)
-            return await this.rpc(request, authHeaders)
+            const auth = await this.generateAuth(request)
+            return await this.rpc(request, auth)
         } catch (err) {
             if ((err as Error).message.includes('not yet answered')) {
                 return null
@@ -455,8 +456,8 @@ export class RondevuAPI {
             method: 'poll',
             params: { since },
         }
-        const authHeaders = await this.generateAuthHeaders(request)
-        return await this.rpc(request, authHeaders)
+        const auth = await this.generateAuth(request)
+        return await this.rpc(request, auth)
     }
 
     /**
@@ -470,8 +471,8 @@ export class RondevuAPI {
             method: 'addIceCandidates',
             params: { offerId, candidates },
         }
-        const authHeaders = await this.generateAuthHeaders(request)
-        return await this.rpc(request, authHeaders)
+        const auth = await this.generateAuth(request)
+        return await this.rpc(request, auth)
     }
 
     /**
@@ -485,8 +486,8 @@ export class RondevuAPI {
             method: 'getIceCandidates',
             params: { offerId, since },
         }
-        const authHeaders = await this.generateAuthHeaders(request)
-        const result = await this.rpc(request, authHeaders)
+        const auth = await this.generateAuth(request)
+        const result = await this.rpc(request, auth)
 
         return {
             candidates: result.candidates || [],
